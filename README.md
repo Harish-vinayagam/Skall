@@ -1,377 +1,286 @@
+<div align="center">
+
 # SKALL
 
-A decentralized terminal messaging application for Linux.
+**A decentralized, peer-to-peer terminal messenger built in Go — for Linux.**
 
-> Main tech stack: Go, libp2p, Bubble Tea, Lip Gloss, SQLite, JSON, Linux
+[![Status](https://img.shields.io/badge/status-in%20development-orange?style=flat-square)](https://github.com/harisshhhhh/skall)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)](https://go.dev/)
+[![Platform](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://kernel.org/)
 
-## Project status
+</div>
 
-🚧 SKALL is currently under active development.
+---
 
-This project is intentionally being built incrementally. The first implementation will focus on a simple terminal-to-terminal TCP chat in Go, using the standard library for networking. That foundation is a learning step and not the final decentralized architecture. The long-term direction is a peer-to-peer messaging system that can evolve toward libp2p-based networking and a richer terminal experience.
+SKALL is a Linux-first terminal messaging application written in Go. It is designed from the ground up as a decentralized, peer-to-peer system — no central servers, no accounts, no cloud dependency.
 
-## Overview
+The project starts with simple TCP-based communication and evolves incrementally toward a libp2p-powered network with a rich, interactive terminal UI built using [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss).
 
-SKALL is a Linux-first terminal messaging application being developed in Go. The goal is to explore how decentralized messaging systems can be built from the ground up, starting with the fundamentals of networking, identity, messaging, and terminal interfaces.
+> **SKALL is an active, incremental learning and portfolio project.** It is honest about its current state. Planned features are clearly marked as planned, not yet implemented.
 
-This project is primarily a learning and portfolio project focused on:
-
-- Computer networking
-- Peer-to-peer networking
-- Distributed systems
-- Concurrent programming
-- Secure communication
-- Go
-- Linux
-- Terminal application development
-
-SKALL is not presented as a production-ready decentralized messenger. It is a deliberately honest, incremental project that begins with small, understandable building blocks and grows toward a more advanced architecture over time.
+---
 
 ## Why SKALL?
 
-Many modern messaging systems rely on centralized infrastructure. SKALL is an experiment in understanding how a messaging system can be designed around direct peer communication, local state, discovery, and distributed coordination.
+Modern messaging is dominated by centralized platforms. SKALL explores a different direction: what does it look like to build a messaging system where peers talk directly to each other, identity is local, and no single entity controls the network?
 
-The project is intended to help build practical understanding of:
+This project is a practical study in:
 
-- how terminals and networked programs interact
-- how peer identity and direct connections are established
-- how messaging protocols evolve from simple to structured designs
-- how distributed systems handle discovery, coordination, and state
-- how secure communication design changes as systems become more complex
+- **Peer-to-peer networking** — how peers discover and connect to each other without a central broker
+- **Distributed systems** — how state, coordination, and messaging work across a decentralized network
+- **Secure communication** — how to design transport and message security without rolling custom cryptography
+- **Go concurrency** — real-world use of goroutines, channels, and concurrent network handling
+- **Terminal application development** — building rich, interactive TUI experiences in the terminal
 
-## Key goals
+---
 
-- Build a terminal-first messaging experience on Linux
-- Learn Go networking and concurrent design patterns
-- Explore peer-to-peer messaging concepts in a practical project
-- Progress from basic TCP communication to a more distributed architecture
-- Keep development honest, simple, and educational
+## Technology Stack
 
-## Current implementation vs. V1 goals vs. future plans
+| Area | Technology |
+|---|---|
+| Language | Go 1.21+ |
+| P2P Networking | [go-libp2p](https://github.com/libp2p/go-libp2p) |
+| Terminal UI | [Bubble Tea](https://github.com/charmbracelet/bubbletea) |
+| Terminal Styling | [Lip Gloss](https://github.com/charmbracelet/lipgloss) |
+| Local Storage | SQLite |
+| Serialization | JSON |
+| Target Platform | Linux |
 
-### Current implementation
-
-At this stage, the project is still early. The first work focuses on learning how a terminal program can connect two endpoints over TCP and exchange messages.
-
-This is not the final architecture and should not be described as a decentralized or production-grade messaging system.
-
-### V1 goals
-
-The initial version is designed to establish the core messaging system foundation. Planned V1 functionality includes:
-
-- Terminal-based messaging
-- User and peer identity
-- Peer-to-peer communication
-- Direct one-to-one messaging
-- Group messaging
-- Peer discovery
-- Local message history
-- Interactive terminal UI
-- Linux support
-
-### Future plans
-
-The project is expected to evolve beyond the initial TCP-only design. The long-term architecture is intended to move toward a more decentralized model using libp2p for peer-to-peer communication, with a richer terminal UI and persistent local storage.
-
-## V1 features
-
-The following features are planned for V1 and should be treated as development goals rather than implemented claims:
-
-- Basic terminal-to-terminal chat over TCP
-- Multiple simultaneous peer connections
-- Simple message routing between peers
-- Local message logging and history
-- Peer identity concepts
-- Basic group chat model
-- Peer discovery mechanisms
-- Improved terminal user experience
-
-The first implementation will begin with a very simple terminal-to-terminal TCP chat in Go using the standard networking library. This is a learning/foundation step only and should not be interpreted as a final or complete decentralized system.
+---
 
 ## Architecture
 
-### Phase 1
+SKALL is developed in three phases, each building on the last.
 
-```text
+### Phase 1 — Foundation (TCP Chat)
+
+```
 Terminal A
      │
-     │ TCP
+     │  TCP
      ▼
 Terminal B
 ```
 
-This phase represents the initial learning step: two terminal instances communicating directly over TCP.
+Two terminal instances talk directly over TCP. This is the learning foundation: networking primitives, Go concurrency, and basic message exchange.
 
-### Phase 2
+### Phase 2 — Structured Messaging
 
-```text
-Multiple TCP clients
-        │
-        ▼
-Basic messaging system
+```
+  Peer A ──┐
+  Peer B ──┼──► Message Router ──► Local History
+  Peer C ──┘
 ```
 
-This phase expands the basic chat model to handle multiple connections and a more structured messaging flow.
+Multiple simultaneous peer connections with a structured message protocol, routing logic, peer identity, and local message persistence.
 
-### Phase 3
+### Phase 3 — Decentralized Network (Target Architecture)
 
-```text
-        SKALL
-          │
-      libp2p
-     /      \
-  Peer A   Peer B
-     \      /
-      Peer C
+```
+         SKALL Node
+              │
+          go-libp2p
+         /    │    \
+     Peer A  Peer B  Peer C
+         \    │    /
+          Peer D
 ```
 
-This is the intended long-term direction: a network of peers communicating through libp2p-style peer-to-peer connectivity.
+A fully decentralized peer-to-peer network using libp2p for transport, peer discovery (mDNS / DHT), and NAT traversal. The final target architecture for V1.
 
-### Conceptual V1 architecture
+### Conceptual V1 System
 
-```text
-                 SKALL
-
-            Terminal UI
-                 │
-          Application Layer
-                 │
-       ┌─────────┼─────────┐
-       │         │         │
-     Chat      Groups    Storage
-       │         │         │
-       └─────────┼─────────┘
-                 │
-             libp2p
-                 │
-          P2P Network
+```
+          ┌────────────────────────┐
+          │       Terminal UI      │  ← Bubble Tea + Lip Gloss
+          └───────────┬────────────┘
+                      │
+          ┌───────────▼────────────┐
+          │    Application Layer   │
+          └──┬──────────┬──────────┘
+             │          │
+     ┌───────▼──┐  ┌────▼────────┐
+     │  Messaging│  │   Storage   │  ← SQLite
+     │  (Chat +  │  │  (History + │
+     │  Groups)  │  │   Peers)    │
+     └───────┬───┘  └─────────────┘
+             │
+     ┌───────▼───────────────────┐
+     │        go-libp2p          │  ← Transport, Discovery, Identity
+     └───────────────────────────┘
 ```
 
-This architecture is intentionally high-level. It reflects the planned direction of the project, not a finalized protocol or implementation design.
+---
 
-## Technology stack
+## Development Roadmap
 
-The following technologies are part of the intended project direction:
-
-| Area | Planned technology |
-| --- | --- |
-| Language | Go |
-| P2P networking | go-libp2p |
-| Terminal UI | Bubble Tea |
-| Terminal styling | Lip Gloss |
-| Local database | SQLite |
-| Serialization | JSON |
-| Target platform | Linux |
-
-These are the planned technologies for the project direction and learning goals. They are not all assumed to be fully integrated at this stage.
-
-## Development roadmap
-
-The roadmap below reflects planned work, not completed milestones.
-
-```text
-[x] Project planning
-
-[ ] Basic Go TCP chat
-[ ] Multiple simultaneous peers
-[ ] Message protocol
-[ ] Peer identity
-[ ] Direct messaging
+```
+[x] Project planning and architecture design
+[x] Technology stack selection
+[ ] Phase 1 — Basic TCP terminal chat in Go
+[ ] Multiple simultaneous peer connections
+[ ] Message protocol design (JSON)
+[ ] Peer identity and local key management
+[ ] Direct (1-to-1) messaging
 [ ] Group messaging
-[ ] Peer discovery
-[ ] libp2p integration
-[ ] SQLite persistence
+[ ] Local message history (SQLite)
+[ ] Peer discovery (mDNS / DHT)
+[ ] go-libp2p integration (Phase 3)
 [ ] Bubble Tea terminal UI
-[ ] Testing
+[ ] Lip Gloss styling and theming
+[ ] Testing suite
 [ ] Documentation
 [ ] V1 release
 ```
 
-The project is expected to move through these stages gradually, with the earliest work focused on understanding the network basics before layering in more advanced features.
+---
 
-## Project structure
+## Project Structure
 
-A conceptual structure for the repository is shown below:
-
-```text
-SKALL/
-├── README.md
+```
+Skall/
 ├── cmd/
-│   └── skall/
+│   └── skall/          # Main application entrypoint
 ├── internal/
-│   ├── net/
-│   ├── chat/
-│   ├── ui/
-│   └── storage/
+│   ├── chat/           # Chat and messaging logic
+│   ├── net/            # Network layer (TCP / libp2p)
+│   ├── ui/             # Bubble Tea terminal UI
+│   └── storage/        # SQLite persistence
 ├── pkg/
-│   ├── peer/
-│   ├── message/
-│   └── config/
-├── docs/
+│   ├── peer/           # Peer identity and management
+│   ├── message/        # Message types and protocol
+│   └── config/         # Configuration
+├── docs/               # Documentation and design notes
 ├── go.mod
 ├── go.sum
-└── LICENSE
+├── LICENSE
+└── README.md
 ```
 
-This structure may evolve as the project matures. The exact layout will depend on implementation choices as the application grows.
+> The structure above reflects the planned layout. It will evolve as the implementation grows.
 
-## Getting started
+---
+
+## Getting Started
 
 ### Prerequisites
 
-- Go 1.21 or newer
-- Linux environment
-- Basic terminal access
-- Git
+- **Go 1.21+** — [Install Go](https://go.dev/doc/install)
+- **Linux** — SKALL targets Linux environments
+- **Git**
 
-### Clone the repository
+### Clone
 
 ```bash
-git clone https://github.com/<your-username>/SKALL.git
-cd SKALL
+git clone https://github.com/harisshhhhh/skall.git
+cd skall
 ```
 
-### Install dependencies
+### Install Dependencies
 
 ```bash
 go mod download
 ```
 
-### Run the project
+### Run
 
-At this stage, there is no stable CLI or release build. The project is in a foundational development phase and commands will be added as the application evolves.
-
-Conceptually, the project may eventually be run as:
+> The CLI is not yet stable. As development progresses, the intended entry point will be:
 
 ```bash
 go run ./cmd/skall
 ```
 
-This command is a planned workflow, not a guarantee of a fully implemented application yet.
+---
 
-## Example usage
+## Planned Usage
 
-The following examples are conceptual and intended to illustrate the expected UX. They are not guaranteed to reflect commands that are already implemented.
-
-### Initial concept
+The following illustrates the intended user experience. These are design goals, not yet implemented commands.
 
 ```bash
+# Start SKALL
 skall
+
+# Connect to a peer by address
+skall connect /ip4/192.168.1.10/tcp/4001/p2p/12D3KooW...
+
+# Open a chat with a known peer
+skall chat <peer-id>
 ```
 
-### Example terminal session
+**Example terminal session:**
 
-```text
-SKALL
+```
+╭─────────────────────────────────────────────────╮
+│  SKALL  v0.1.0                                  │
+│  Peer ID: 12D3KooWAbCdEf...                     │
+│  Connected peers: 2                             │
+╰─────────────────────────────────────────────────╯
 
-Peer ID: 12D3KooW...
-
-Connected Peers: 2
-
-> hello
+[alice] hey, this is skall
+[you]   yeah, no servers needed
+[bob]   clean
+> _
 ```
 
-These examples communicate the intended user experience but should not be interpreted as completed functionality.
+---
 
-## Security considerations
+## Security
 
-Security is an important long-term design concern for SKALL, but the project is still in early development and does not yet claim strong production-grade guarantees.
+Security is a first-class design concern, even though SKALL is still in early development.
 
-Planned security work will focus on using established cryptographic and networking primitives rather than implementing custom cryptographic logic from scratch. The project intends to follow standard approaches for secure communication where appropriate.
+The project intends to:
 
-Important distinction:
+- Use **established cryptographic primitives** (via libp2p's built-in security protocols like Noise or TLS 1.3) rather than implementing custom cryptography
+- Establish **authenticated peer identity** using local keypairs
+- Design toward **end-to-end message confidentiality** as the architecture matures
 
-- Secure transport is not the same as end-to-end message encryption.
-- A transport layer may protect connections between peers, but message confidentiality and authenticity still require proper higher-level design.
-- The project does not currently claim end-to-end encrypted messaging unless that capability is formally implemented and verified.
+**Important distinctions:**
 
-At this stage, the project should be treated as educational and experimental, not as a secure communication platform.
+- Secure transport ≠ end-to-end message encryption. Both are necessary for a genuinely private messenger.
+- SKALL does **not** currently claim production-grade security. It should be treated as **educational and experimental** until security guarantees are formally implemented and verified.
 
-## Current limitations
+---
 
-Because SKALL is in early development, it may have limitations such as:
+## Current Limitations
 
-- Internet connectivity requirements for peer communication
-- NAT traversal challenges
-- Firewall restrictions
-- Peer availability and discoverability issues
-- No offline message delivery initially
-- No production-grade security guarantees
-- No mobile or web client
-- Linux-first development focus
-- Limited testing and operational maturity
+SKALL is early-stage. Known limitations include:
 
-SKALL is not designed to compete with mature messaging applications. It is a learning-focused project that evolves as the system becomes more capable.
+- No stable CLI or release build yet
+- NAT traversal and firewall compatibility not yet implemented
+- No offline message delivery in initial versions
+- No mobile or web client (terminal-only, Linux-first)
+- No production-grade security guarantees at this stage
+- Limited test coverage during early development phases
 
-## Future plans
-
-The long-term vision for SKALL is to grow from a simple Go TCP learning project into a more capable decentralized terminal messaging system.
-
-Planned future directions include:
-
-- improving peer discovery and network topology
-- introducing structured message protocols
-- supporting direct and group communication more formally
-- integrating libp2p for peer-to-peer networking
-- adding persistent local storage with SQLite
-- refining the terminal UI with Bubble Tea and Lip Gloss
-- improving testing, reliability, and documentation
-- exploring secure communication design in a principled way
-
-This project is expected to remain a practical learning project even as it grows in capability.
-
-## Learning objectives
-
-SKALL is a portfolio project intended to build practical knowledge in:
-
-- Go networking and concurrency
-- distributed system concepts
-- peer-to-peer communication
-- message serialization and protocol design
-- terminal application development
-- local persistence strategies
-- secure communication architecture
-- practical design trade-offs in decentralized systems
-
-The project is meant to be educational first, useful second, and resilient over time through iterative improvement.
-
-## Project philosophy
-
-SKALL is not trying to become a replacement for production messaging applications. It is a deliberately scoped project for learning and experimentation.
-
-Its purpose is to:
-
-> Build a practical understanding of networking and distributed systems by progressively developing a decentralized terminal messaging application from the ground up.
-
-This philosophy emphasizes learning by implementation, honest status reporting, and incremental growth rather than hype or unrealistic claims.
+---
 
 ## Contributing
 
-Contributions are welcome as the project evolves.
+Contributions are welcome. SKALL is best suited for contributors interested in:
 
-At this stage, the project is best suited for contributors who are interested in:
+- Go networking and systems programming
+- P2P / distributed systems research and design
+- Terminal UI development (Bubble Tea, Lip Gloss)
+- Protocol design and message serialization
+- Architecture discussions and documentation
 
-- Go development
-- networking and protocol design
-- terminal UI work
-- decentralized systems research
-- architecture discussions
-- documentation and testing
-
-If you would like to contribute:
+### How to contribute
 
 1. Fork the repository
-2. Create a feature or learning branch
+2. Create a branch (`feature/your-topic` or `fix/issue-name`)
 3. Make changes with clear documentation and rationale
 4. Open a pull request describing the design intent and current status
 
-Please keep the project honest and incremental. Contributions should reflect the current maturity level of the project rather than assuming a production-ready system.
+Please keep contributions honest and incremental. Reflect the current maturity of the project rather than assuming a production-ready system.
+
+---
 
 ## License
 
-This project is intended to be licensed under the MIT License.
+SKALL is released under the **MIT License**.
 
-```text
+```
 MIT License
 
 Copyright (c) 2026 SKALL contributors
@@ -397,4 +306,6 @@ SOFTWARE.
 
 ---
 
-SKALL is a learning project focused on building a decentralized terminal messaging system in Go, starting small and moving toward a more capable peer-to-peer architecture over time.
+<div align="center">
+Built with Go · Runs in your terminal · No servers required
+</div>
