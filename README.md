@@ -236,3 +236,76 @@ The project intends to:
 - Design toward **end-to-end message confidentiality** as the architecture matures
 
 **Important distinctions:**
+
+- Secure transport ≠ end-to-end message encryption. Both are necessary for a genuinely private messenger.
+- SKALL does **not** currently claim production-grade security. It should be treated as **educational and experimental** until security guarantees are formally implemented and verified.
+
+---
+
+## Current Limitations
+
+SKALL is early-stage. Known limitations include:
+
+- No stable CLI or release build yet
+- NAT traversal and firewall compatibility not yet implemented
+- No offline message delivery in initial versions
+- No mobile or web client (terminal-only, Linux-first)
+- No production-grade security guarantees at this stage
+- Limited test coverage during early development phases
+
+---
+
+## Contributing
+
+Contributions are welcome. SKALL is best suited for contributors interested in:
+
+- Go networking and systems programming
+- P2P / distributed systems research and design
+- Terminal UI development (Bubble Tea, Lip Gloss)
+- Protocol design and message serialization
+- Architecture discussions and documentation
+
+### How to contribute
+
+1. Fork the repository
+2. Create a branch (`feature/your-topic` or `fix/issue-name`)
+3. Make changes with clear documentation and rationale
+4. Open a pull request describing the design intent and current status
+
+Please keep contributions honest and incremental. Reflect the current maturity of the project rather than assuming a production-ready system.
+
+---
+
+## License
+
+SKALL is released under the **MIT License**.
+
+```
+MIT License
+
+Copyright (c) 2026 SKALL contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
+<div align="center">
+Built with Go · Runs in your terminal · No servers required
+</div>
