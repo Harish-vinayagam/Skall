@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
 
@@ -160,13 +161,14 @@ func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
 	}
 }
 
-func StartServer(address string) error {
+func StartServer(address string, localIdentity identity.Identity) error {
 	server := NewServer(address)
 	if err := server.Listen(); err != nil {
 		return err
 	}
 
 	fmt.Println("SKALL server listening on", server.Addr())
+	fmt.Println("Local identity:", localIdentity.DisplayName, "(", localIdentity.PeerID, ")")
 
 	errCh := make(chan error, 1)
 	go func() {

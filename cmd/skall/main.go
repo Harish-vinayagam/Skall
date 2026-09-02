@@ -1,31 +1,61 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
+	"os"
+
+	"github.com/Harish-vinayagam/Skall/internal/identity"
 
 	"github.com/Harish-vinayagam/Skall/internal/network"
 )
 
 func main() {
-	mode := flag.String("mode", "server", "server or client")
-	address := flag.String("address", "localhost:4000", "TCP address")
+	localIdentity, err := loadLocalIdentity()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	flag.Parse()
+	args := os.Args[1:]
+	if len(args) == 0 {
+		if err := network.StartServer("localhost:4000", localIdentity); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
-	switch *mode {
+	switch args[0] {
+	case "identity":
+		fmt.Println(localIdentity.Summary())
 	case "server":
-		if err := network.StartServer(*address); err != nil {
+		address := "localhost:4000"
+		if len(args) > 1 {
+			address = args[1]
+		}
+		if err := network.StartServer(address, localIdentity); err != nil {
 			log.Fatal(err)
 		}
 	case "client":
-		if err := network.StartClient(*address); err != nil {
+		address := "localhost:4000"
+		if len(args) > 1 {
+			address = args[1]
+		}
+		if err := network.StartClient(address, localIdentity); err != nil {
 			log.Fatal(err)
 		}
 	default:
 		fmt.Println("Usage:")
-		fmt.Println("  skall -mode=server -address=localhost:4000")
-		fmt.Println("  skall -mode=client -address=localhost:4000")
+		fmt.Println("  skall identity")
+		fmt.Println("  skall server [address]")
+		fmt.Println("  skall client [address]")
 	}
+}
+
+func loadLocalIdentity() (identity.Identity, error) {
+	store, err := identity.DefaultStore()
+	if err != nil {
+		return identity.Identity{}, err
+	}
+
+	return store.LoadOrCreate()
 }

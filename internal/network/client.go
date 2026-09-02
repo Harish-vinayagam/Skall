@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
 
@@ -103,7 +104,7 @@ func (c *clientConn) close() {
 	})
 }
 
-func StartClient(address string) error {
+func StartClient(address string, localIdentity identity.Identity) error {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return err
@@ -112,7 +113,7 @@ func StartClient(address string) error {
 
 	fmt.Println("Connected to", address)
 	writer := protocol.NewFrameWriter(conn)
-	senderID := conn.LocalAddr().String()
+	senderID := localIdentity.PeerID
 
 	go func() {
 		reader := protocol.NewFrameReader(conn)
@@ -126,7 +127,7 @@ func StartClient(address string) error {
 				return
 			}
 
-			fmt.Println("Server:", message.Body)
+			fmt.Printf("Server [%s]: %s\n", message.SenderID, message.Body)
 		}
 	}()
 
