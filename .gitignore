@@ -1,0 +1,28 @@
+# Go build output
+/skall
+/bin/
+/dist/
+
+# Go test / coverage
+*.test
+*.out
+coverage.*
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Local application data
+/data/*
+!/data/.gitkeep
+
+# Environment files
+.env
+.env.*
+
+# Temporary files
+*.tmp
+*.log
