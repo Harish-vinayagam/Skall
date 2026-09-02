@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
 
 type Server struct {
@@ -141,7 +143,7 @@ func (s *Server) removeClient(client *clientConn) {
 	client.close()
 }
 
-func (s *Server) broadcast(sender *clientConn, message string) {
+func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
 	s.mu.RLock()
 	recipients := make([]*clientConn, 0, len(s.clients))
 	for client := range s.clients {

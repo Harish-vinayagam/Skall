@@ -2,11 +2,15 @@ package network
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
 
 type clientConn struct {
@@ -14,7 +18,7 @@ type clientConn struct {
 	conn   net.Conn
 	remote string
 
-	writeCh chan string
+	writeCh chan protocol.Message
 	closed  chan struct{}
 	once    sync.Once
 	closedN int32
@@ -25,7 +29,7 @@ func newClientConn(server *Server, conn net.Conn) *clientConn {
 		server:  server,
 		conn:    conn,
 		remote:  conn.RemoteAddr().String(),
-		writeCh: make(chan string, 16),
+		writeCh: make(chan protocol.Message, 16),
 		closed:  make(chan struct{}),
 	}
 }
@@ -34,15 +38,24 @@ func (c *clientConn) readLoop() {
 	defer c.server.wg.Done()
 	defer c.server.removeClient(c)
 
-	scanner := bufio.NewScanner(c.conn)
-	for scanner.Scan() {
-		message := scanner.Text()
-		fmt.Printf("%s: %s\n", c.remote, message)
-		c.server.broadcast(c, message)
-	}
+	reader := protocol.NewFrameReader(c.conn)
+	for {
+		message, err := reader.ReadMessage()
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			fmt.Println("Client read error:", c.remote, err)
+			return
+		}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Println("Client read error:", c.remote, err)
+		if err := message.Validate(); err != nil {
+			fmt.Println("Rejected message from", c.remote, ":", err)
+			continue
+		}
+
+		fmt.Printf("%s: %s\n", c.remote, message.Body)
+		c.server.broadcast(c, message)
 	}
 }
 
@@ -50,6 +63,7 @@ func (c *clientConn) writeLoop() {
 	defer c.server.wg.Done()
 	defer c.server.removeClient(c)
 
+	writer := protocol.NewFrameWriter(c.conn)
 	for {
 		select {
 		case message, ok := <-c.writeCh:
@@ -57,7 +71,7 @@ func (c *clientConn) writeLoop() {
 				return
 			}
 
-			if _, err := fmt.Fprintln(c.conn, message); err != nil {
+			if err := writer.WriteMessage(message); err != nil {
 				fmt.Println("Client write error:", c.remote, err)
 				return
 			}
@@ -67,7 +81,7 @@ func (c *clientConn) writeLoop() {
 	}
 }
 
-func (c *clientConn) enqueue(message string) bool {
+func (c *clientConn) enqueue(message protocol.Message) bool {
 	if atomic.LoadInt32(&c.closedN) == 1 {
 		return false
 	}
@@ -97,22 +111,34 @@ func StartClient(address string) error {
 	defer conn.Close()
 
 	fmt.Println("Connected to", address)
+	writer := protocol.NewFrameWriter(conn)
+	senderID := conn.LocalAddr().String()
 
 	go func() {
-		scanner := bufio.NewScanner(conn)
-		for scanner.Scan() {
-			fmt.Println("Server:", scanner.Text())
-		}
+		reader := protocol.NewFrameReader(conn)
+		for {
+			message, err := reader.ReadMessage()
+			if err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+					return
+				}
+				fmt.Println("Client receive error:", err)
+				return
+			}
 
-		if err := scanner.Err(); err != nil {
-			fmt.Println("Client receive error:", err)
+			fmt.Println("Server:", message.Body)
 		}
 	}()
 
 	input := bufio.NewScanner(os.Stdin)
 	for input.Scan() {
-		message := input.Text()
-		if _, err := fmt.Fprintln(conn, message); err != nil {
+		text := input.Text()
+		if text == "" {
+			continue
+		}
+
+		payload := protocol.NewChatMessage(senderID, "", "", text)
+		if err := writer.WriteMessage(payload); err != nil {
 			return err
 		}
 	}
