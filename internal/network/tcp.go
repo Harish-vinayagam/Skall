@@ -165,13 +165,13 @@ func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
 		if !exists || recipient == nil {
 			// inform sender of failure
 			sys := protocol.Message{
-				Version:   protocol.Version,
-				ID:        strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
-				Type:      protocol.TypeSystem,
-				SenderID:  "server",
+				Version:     protocol.Version,
+				ID:          strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
+				Type:        protocol.TypeSystem,
+				SenderID:    "server",
 				RecipientID: message.SenderID,
-				Timestamp: time.Now().UTC(),
-				Body:      fmt.Sprintf("delivery failed: peer %s unknown or offline", message.RecipientID),
+				Timestamp:   time.Now().UTC(),
+				Body:        fmt.Sprintf("delivery failed: peer %s unknown or offline", message.RecipientID),
 			}
 			_ = sender.enqueue(sys)
 			return
@@ -180,13 +180,13 @@ func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
 		if !recipient.enqueue(message) {
 			s.removeClient(recipient)
 			sys := protocol.Message{
-				Version:   protocol.Version,
-				ID:        strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
-				Type:      protocol.TypeSystem,
-				SenderID:  "server",
+				Version:     protocol.Version,
+				ID:          strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
+				Type:        protocol.TypeSystem,
+				SenderID:    "server",
 				RecipientID: message.SenderID,
-				Timestamp: time.Now().UTC(),
-				Body:      fmt.Sprintf("delivery failed: peer %s disconnected", message.RecipientID),
+				Timestamp:   time.Now().UTC(),
+				Body:        fmt.Sprintf("delivery failed: peer %s disconnected", message.RecipientID),
 			}
 			_ = sender.enqueue(sys)
 		}

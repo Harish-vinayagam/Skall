@@ -18,9 +18,9 @@ import (
 )
 
 type clientConn struct {
-	server *Server
-	conn   net.Conn
-	remote string
+	server      *Server
+	conn        net.Conn
+	remote      string
 	peerID      string
 	displayName string
 
