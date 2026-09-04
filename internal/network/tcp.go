@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -19,6 +20,8 @@ type Server struct {
 	mu       sync.RWMutex
 	listener net.Listener
 	clients  map[*clientConn]struct{}
+	registry *PeerRegistry
+	router   *MessageRouter
 
 	shutdownOnce sync.Once
 	wg           sync.WaitGroup
@@ -26,9 +29,12 @@ type Server struct {
 }
 
 func NewServer(address string) *Server {
+	registry := NewPeerRegistry()
 	return &Server{
 		address:  address,
 		clients:  make(map[*clientConn]struct{}),
+		registry: registry,
+		router:   NewMessageRouter(registry),
 		listener: nil,
 	}
 }
@@ -141,22 +147,117 @@ func (s *Server) removeClient(client *clientConn) {
 	}
 	s.mu.Unlock()
 
+	if peerID, ok := s.registry.Unregister(client); ok {
+		s.notifyPeerDisconnected(peerID)
+	}
+
 	client.close()
 }
 
-func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
-	s.mu.RLock()
-	recipients := make([]*clientConn, 0, len(s.clients))
-	for client := range s.clients {
-		if client != sender {
-			recipients = append(recipients, client)
-		}
+func (s *Server) handleIncoming(client *clientConn, message protocol.Message) {
+	switch message.Type {
+	case protocol.TypeJoin:
+		s.handleJoin(client, message)
+	case protocol.TypeChat:
+		s.handleDirectChat(client, message)
+	case protocol.TypeSystem:
+		s.handleSystem(client, message)
+	default:
+		s.sendSystem(client, "unsupported message type")
 	}
-	s.mu.RUnlock()
+}
 
-	for _, client := range recipients {
-		if !client.enqueue(message) {
-			s.removeClient(client)
+func (s *Server) handleJoin(client *clientConn, message protocol.Message) {
+	if err := s.registry.Register(message.SenderID, client); err != nil {
+		s.sendSystem(client, "failed to identify peer: "+err.Error())
+		return
+	}
+
+	s.sendSystem(client, "identified as "+message.SenderID)
+	s.notifyPeerConnected(message.SenderID)
+}
+
+func (s *Server) handleDirectChat(client *clientConn, message protocol.Message) {
+	s.mu.RLock()
+	router := s.router
+	s.mu.RUnlock()
+	if router == nil {
+		s.sendSystem(client, "routing unavailable")
+		return
+	}
+
+	err := router.RouteDirect(client, message)
+	if err == nil {
+		return
+	}
+
+	switch {
+	case errors.Is(err, ErrMissingRecipient):
+		s.sendSystem(client, "delivery failed: recipient is required")
+	case errors.Is(err, ErrUnknownPeer):
+		s.sendSystem(client, "delivery failed: peer "+message.RecipientID+" is offline or unknown")
+	case errors.Is(err, ErrPeerDisconnected):
+		s.sendSystem(client, "delivery failed: peer "+message.RecipientID+" disconnected")
+	case errors.Is(err, ErrSenderNotIdentified):
+		s.sendSystem(client, "identify first before sending messages")
+	case errors.Is(err, ErrSenderMismatch):
+		s.sendSystem(client, "delivery failed: sender identity mismatch")
+	default:
+		s.sendSystem(client, "delivery failed")
+	}
+}
+
+func (s *Server) handleSystem(client *clientConn, message protocol.Message) {
+	if strings.TrimSpace(message.Body) != "/peers" {
+		s.sendSystem(client, "unknown command")
+		return
+	}
+
+	senderPeerID, ok := s.registry.PeerID(client)
+	if !ok {
+		s.sendSystem(client, "identify first before requesting peers")
+		return
+	}
+
+	peers := s.registry.List(senderPeerID)
+	if len(peers) == 0 {
+		s.sendSystem(client, "Connected peers: (none)")
+		return
+	}
+
+	s.sendSystem(client, "Connected peers: "+strings.Join(peers, ", "))
+}
+
+func (s *Server) sendSystem(client *clientConn, body string) {
+	systemMessage := protocol.NewSystemMessage("server", "", body)
+	if !client.enqueue(systemMessage) {
+		s.removeClient(client)
+	}
+}
+
+func (s *Server) notifyPeerConnected(peerID string) {
+	notice := protocol.NewJoinMessage("server", "peer connected: "+peerID)
+	s.broadcastSystem(notice, peerID)
+}
+
+func (s *Server) notifyPeerDisconnected(peerID string) {
+	notice := protocol.NewLeaveMessage("server", "peer disconnected: "+peerID)
+	s.broadcastSystem(notice, peerID)
+}
+
+func (s *Server) broadcastSystem(message protocol.Message, excludePeerID string) {
+	peers := s.registry.List(excludePeerID)
+	for _, peerID := range peers {
+		recipient, ok := s.registry.Lookup(peerID)
+		if !ok {
+			continue
+		}
+		if !recipient.enqueue(message) {
+			if conn, ok := recipient.(*clientConn); ok {
+				s.removeClient(conn)
+				continue
+			}
+			s.registry.Unregister(recipient)
 		}
 	}
 }

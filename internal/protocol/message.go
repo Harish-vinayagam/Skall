@@ -85,3 +85,40 @@ func NewChatMessage(senderID, recipientID, groupID, body string) Message {
 		Body:        body,
 	}
 }
+
+func NewSystemMessage(senderID, recipientID, body string) Message {
+	now := time.Now().UTC()
+	return Message{
+		Version:     Version,
+		ID:          strconv.FormatInt(now.UnixNano(), 10),
+		Type:        TypeSystem,
+		SenderID:    senderID,
+		RecipientID: recipientID,
+		Timestamp:   now,
+		Body:        body,
+	}
+}
+
+func NewJoinMessage(senderID, body string) Message {
+	now := time.Now().UTC()
+	return Message{
+		Version:   Version,
+		ID:        strconv.FormatInt(now.UnixNano(), 10),
+		Type:      TypeJoin,
+		SenderID:  senderID,
+		Timestamp: now,
+		Body:      body,
+	}
+}
+
+func NewLeaveMessage(senderID, body string) Message {
+	now := time.Now().UTC()
+	return Message{
+		Version:   Version,
+		ID:        strconv.FormatInt(now.UnixNano(), 10),
+		Type:      TypeLeave,
+		SenderID:  senderID,
+		Timestamp: now,
+		Body:      body,
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/Harish-vinayagam/Skall/internal/chat"
 	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
@@ -55,8 +56,7 @@ func (c *clientConn) readLoop() {
 			continue
 		}
 
-		fmt.Printf("%s: %s\n", c.remote, message.Body)
-		c.server.broadcast(c, message)
+		c.server.handleIncoming(c, message)
 	}
 }
 
@@ -112,8 +112,12 @@ func StartClient(address string, localIdentity identity.Identity) error {
 	defer conn.Close()
 
 	fmt.Println("Connected to", address)
-	writer := protocol.NewFrameWriter(conn)
-	senderID := localIdentity.PeerID
+	fmt.Println("Commands: /peers, /msg <peer> <message>")
+	writer := newSafeFrameSender(conn)
+	chatService := chat.NewService(localIdentity.PeerID, writer)
+	if err := chatService.Start(); err != nil {
+		return err
+	}
 
 	go func() {
 		reader := protocol.NewFrameReader(conn)
@@ -127,22 +131,34 @@ func StartClient(address string, localIdentity identity.Identity) error {
 				return
 			}
 
-			fmt.Printf("Server [%s]: %s\n", message.SenderID, message.Body)
+			fmt.Println(chat.FormatIncoming(message))
 		}
 	}()
 
 	input := bufio.NewScanner(os.Stdin)
 	for input.Scan() {
 		text := input.Text()
-		if text == "" {
-			continue
-		}
-
-		payload := protocol.NewChatMessage(senderID, "", "", text)
-		if err := writer.WriteMessage(payload); err != nil {
-			return err
+		if err := chatService.HandleInput(text); err != nil {
+			fmt.Println("[system]", err)
 		}
 	}
 
 	return input.Err()
+}
+
+type safeFrameSender struct {
+	mu     sync.Mutex
+	writer *protocol.FrameWriter
+}
+
+func newSafeFrameSender(conn net.Conn) *safeFrameSender {
+	return &safeFrameSender{
+		writer: protocol.NewFrameWriter(conn),
+	}
+}
+
+func (s *safeFrameSender) Send(message protocol.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writer.WriteMessage(message)
 }
