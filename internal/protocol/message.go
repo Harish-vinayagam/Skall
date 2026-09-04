@@ -86,3 +86,4 @@ func NewChatMessage(senderID, recipientID, groupID, body string) Message {
 	}
 }
 
+
