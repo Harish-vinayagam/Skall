@@ -59,3 +59,5 @@ func loadLocalIdentity() (identity.Identity, error) {
 
 	return store.LoadOrCreate()
 }
+
+

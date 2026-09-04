@@ -6,8 +6,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
@@ -19,6 +22,7 @@ type Server struct {
 	mu       sync.RWMutex
 	listener net.Listener
 	clients  map[*clientConn]struct{}
+	peers    map[string]*clientConn
 
 	shutdownOnce sync.Once
 	wg           sync.WaitGroup
@@ -29,6 +33,7 @@ func NewServer(address string) *Server {
 	return &Server{
 		address:  address,
 		clients:  make(map[*clientConn]struct{}),
+		peers:    make(map[string]*clientConn),
 		listener: nil,
 	}
 }
@@ -139,12 +144,56 @@ func (s *Server) removeClient(client *clientConn) {
 	if _, exists := s.clients[client]; exists {
 		delete(s.clients, client)
 	}
+	// remove from peer map if registered
+	if client.peerID != "" {
+		if p, ok := s.peers[client.peerID]; ok && p == client {
+			delete(s.peers, client.peerID)
+		}
+	}
 	s.mu.Unlock()
 
 	client.close()
 }
 
 func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
+	// If a recipient is specified, route only to that peer
+	if strings.TrimSpace(message.RecipientID) != "" {
+		s.mu.RLock()
+		recipient, exists := s.peers[message.RecipientID]
+		s.mu.RUnlock()
+
+		if !exists || recipient == nil {
+			// inform sender of failure
+			sys := protocol.Message{
+				Version:   protocol.Version,
+				ID:        strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
+				Type:      protocol.TypeSystem,
+				SenderID:  "server",
+				RecipientID: message.SenderID,
+				Timestamp: time.Now().UTC(),
+				Body:      fmt.Sprintf("delivery failed: peer %s unknown or offline", message.RecipientID),
+			}
+			_ = sender.enqueue(sys)
+			return
+		}
+
+		if !recipient.enqueue(message) {
+			s.removeClient(recipient)
+			sys := protocol.Message{
+				Version:   protocol.Version,
+				ID:        strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
+				Type:      protocol.TypeSystem,
+				SenderID:  "server",
+				RecipientID: message.SenderID,
+				Timestamp: time.Now().UTC(),
+				Body:      fmt.Sprintf("delivery failed: peer %s disconnected", message.RecipientID),
+			}
+			_ = sender.enqueue(sys)
+		}
+		return
+	}
+
+	// broadcast to all except sender
 	s.mu.RLock()
 	recipients := make([]*clientConn, 0, len(s.clients))
 	for client := range s.clients {
@@ -159,6 +208,12 @@ func (s *Server) broadcast(sender *clientConn, message protocol.Message) {
 			s.removeClient(client)
 		}
 	}
+}
+
+func (s *Server) registerPeer(client *clientConn, peerID string) {
+	s.mu.Lock()
+	s.peers[peerID] = client
+	s.mu.Unlock()
 }
 
 func StartServer(address string, localIdentity identity.Identity) error {
