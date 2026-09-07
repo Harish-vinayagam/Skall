@@ -15,6 +15,7 @@ import (
 
 	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
+	"github.com/Harish-vinayagam/Skall/internal/storage"
 )
 
 type clientConn struct {
@@ -119,6 +120,16 @@ func (c *clientConn) close() {
 }
 
 func StartClient(address string, localIdentity identity.Identity) error {
+	db, err := storage.OpenDefault()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := db.UpsertIdentityMetadata(localIdentity); err != nil {
+		return err
+	}
+
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return err
@@ -128,6 +139,21 @@ func StartClient(address string, localIdentity identity.Identity) error {
 	fmt.Println("Connected to", address)
 	writer := protocol.NewFrameWriter(conn)
 	senderID := localIdentity.PeerID
+	persistOutbound := func(payload protocol.Message) error {
+		if err := db.InsertMessage(payload, storage.DirectionOutbound, storage.StatusPending); err != nil && !errors.Is(err, storage.ErrDuplicateMessage) {
+			fmt.Println("Warning: failed to persist outgoing message:", err)
+		}
+		if err := writer.WriteMessage(payload); err != nil {
+			if updateErr := db.UpdateMessageStatus(payload.ID, storage.StatusFailed); updateErr != nil && !errors.Is(updateErr, io.EOF) {
+				fmt.Println("Warning: failed to mark outgoing message as failed:", updateErr)
+			}
+			return err
+		}
+		if updateErr := db.UpdateMessageStatus(payload.ID, storage.StatusSent); updateErr != nil {
+			fmt.Println("Warning: failed to mark outgoing message as sent:", updateErr)
+		}
+		return nil
+	}
 
 	// announce ourselves right away
 	now := time.Now().UTC()
@@ -139,7 +165,9 @@ func StartClient(address string, localIdentity identity.Identity) error {
 		Timestamp: now,
 		Body:      localIdentity.DisplayName,
 	}
-	_ = writer.WriteMessage(join)
+	if err := persistOutbound(join); err != nil {
+		return err
+	}
 
 	// local peer list
 	peers := make(map[string]string)
@@ -161,13 +189,32 @@ func StartClient(address string, localIdentity identity.Identity) error {
 				peersMu.Lock()
 				peers[message.SenderID] = message.Body
 				peersMu.Unlock()
+				if err := db.UpsertPeer(message.SenderID, message.Body, message.Timestamp); err != nil {
+					fmt.Println("Warning: failed to persist peer join:", err)
+				}
+				if err := db.InsertMessage(message, storage.DirectionInbound, storage.StatusReceived); err != nil && !errors.Is(err, storage.ErrDuplicateMessage) {
+					fmt.Println("Warning: failed to persist join message:", err)
+				}
 				fmt.Printf("Peer joined: %s (%s)\n", message.Body, message.SenderID)
 			case protocol.TypeLeave:
 				peersMu.Lock()
 				delete(peers, message.SenderID)
 				peersMu.Unlock()
+				if err := db.UpsertPeer(message.SenderID, message.SenderID, message.Timestamp); err != nil {
+					fmt.Println("Warning: failed to persist peer leave:", err)
+				}
+				if err := db.InsertMessage(message, storage.DirectionInbound, storage.StatusReceived); err != nil && !errors.Is(err, storage.ErrDuplicateMessage) {
+					fmt.Println("Warning: failed to persist leave message:", err)
+				}
 				fmt.Printf("Peer left: %s (%s)\n", message.SenderID, message.Body)
 			case protocol.TypeSystem:
+				status := storage.StatusReceived
+				if strings.Contains(strings.ToLower(message.Body), "delivery failed") {
+					status = storage.StatusFailed
+				}
+				if err := db.InsertMessage(message, storage.DirectionInbound, status); err != nil && !errors.Is(err, storage.ErrDuplicateMessage) {
+					fmt.Println("Warning: failed to persist system message:", err)
+				}
 				fmt.Printf("System: %s\n", message.Body)
 			default:
 				peersMu.Lock()
@@ -175,6 +222,12 @@ func StartClient(address string, localIdentity identity.Identity) error {
 				peersMu.Unlock()
 				if name == "" {
 					name = message.SenderID
+				}
+				if err := db.UpsertPeer(message.SenderID, name, message.Timestamp); err != nil {
+					fmt.Println("Warning: failed to persist peer metadata:", err)
+				}
+				if err := db.InsertMessage(message, storage.DirectionInbound, storage.StatusReceived); err != nil && !errors.Is(err, storage.ErrDuplicateMessage) {
+					fmt.Println("Warning: failed to persist inbound message:", err)
 				}
 				fmt.Printf("%s: %s\n", name, message.Body)
 			}
@@ -222,7 +275,10 @@ func StartClient(address string, localIdentity identity.Identity) error {
 					Timestamp:   now,
 					Body:        body,
 				}
-				if err := writer.WriteMessage(payload); err != nil {
+				if err := db.UpsertPeer(peer, peer, now); err != nil {
+					fmt.Println("Warning: failed to persist target peer:", err)
+				}
+				if err := persistOutbound(payload); err != nil {
 					return err
 				}
 			default:
@@ -242,7 +298,7 @@ func StartClient(address string, localIdentity identity.Identity) error {
 			Timestamp:   now,
 			Body:        line,
 		}
-		if err := writer.WriteMessage(payload); err != nil {
+		if err := persistOutbound(payload); err != nil {
 			return err
 		}
 	}
