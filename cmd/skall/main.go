@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/Harish-vinayagam/Skall/internal/identity"
+	"github.com/Harish-vinayagam/Skall/internal/storage"
 
 	"github.com/Harish-vinayagam/Skall/internal/network"
 )
@@ -57,5 +58,20 @@ func loadLocalIdentity() (identity.Identity, error) {
 		return identity.Identity{}, err
 	}
 
-	return store.LoadOrCreate()
+	localIdentity, err := store.LoadOrCreate()
+	if err != nil {
+		return identity.Identity{}, err
+	}
+
+	db, err := storage.OpenDefault()
+	if err != nil {
+		return identity.Identity{}, err
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := db.UpsertIdentityMetadata(localIdentity); err != nil {
+		return identity.Identity{}, err
+	}
+
+	return localIdentity, nil
 }
