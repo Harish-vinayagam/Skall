@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 const Version = 1
@@ -89,4 +92,33 @@ func shortPeerID(peerID string) string {
 		return peerID
 	}
 	return peerID[:8]
+}
+
+// LibP2PPrivKey converts the identity's ed25519 private key into a libp2p
+// crypto.PrivKey. The same key material is used — there is no second identity.
+func (i Identity) LibP2PPrivKey() (libp2pcrypto.PrivKey, error) {
+	if len(i.PrivateKey) == 0 {
+		return nil, errors.New("identity has no private key")
+	}
+	privKey := i.PrivateKey // crypto/ed25519.PrivateKey ([]byte alias)
+	lp2pPriv, _, err := libp2pcrypto.KeyPairFromStdKey(&privKey)
+	if err != nil {
+		return nil, fmt.Errorf("convert identity key to libp2p: %w", err)
+	}
+	return lp2pPriv, nil
+}
+
+// LibP2PPeerID derives the libp2p peer.ID from this identity's public key.
+// The libp2p peer.ID is a multihash of the public key and differs from the
+// SKALL application-layer PeerID (which is a hex SHA-256).
+func (i Identity) LibP2PPeerID() (peer.ID, error) {
+	lp2pPriv, err := i.LibP2PPrivKey()
+	if err != nil {
+		return "", err
+	}
+	pid, err := peer.IDFromPrivateKey(lp2pPriv)
+	if err != nil {
+		return "", fmt.Errorf("derive libp2p peer id: %w", err)
+	}
+	return pid, nil
 }
