@@ -94,3 +94,68 @@ func TestGenerateUniqueIdentity(t *testing.T) {
 		t.Fatal("expected generated identities to be unique")
 	}
 }
+
+func TestLibP2PPrivKeyConversion(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	privKey, err := id.LibP2PPrivKey()
+	if err != nil {
+		t.Fatalf("LibP2PPrivKey() error = %v", err)
+	}
+	if privKey == nil {
+		t.Fatal("LibP2PPrivKey() returned nil")
+	}
+}
+
+func TestLibP2PPeerIDDerived(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	pid, err := id.LibP2PPeerID()
+	if err != nil {
+		t.Fatalf("LibP2PPeerID() error = %v", err)
+	}
+	if pid == "" {
+		t.Fatal("LibP2PPeerID() returned empty peer.ID")
+	}
+	// Must be deterministic: same key → same peer.ID every time.
+	pid2, err := id.LibP2PPeerID()
+	if err != nil {
+		t.Fatalf("LibP2PPeerID() second call error = %v", err)
+	}
+	if pid != pid2 {
+		t.Fatalf("LibP2PPeerID() not deterministic: %q != %q", pid, pid2)
+	}
+}
+
+func TestLibP2PPeerIDUniquePerIdentity(t *testing.T) {
+	a, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() a error = %v", err)
+	}
+	b, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() b error = %v", err)
+	}
+	pidA, err := a.LibP2PPeerID()
+	if err != nil {
+		t.Fatalf("a.LibP2PPeerID() error = %v", err)
+	}
+	pidB, err := b.LibP2PPeerID()
+	if err != nil {
+		t.Fatalf("b.LibP2PPeerID() error = %v", err)
+	}
+	if pidA == pidB {
+		t.Fatal("distinct identities must produce distinct libp2p peer IDs")
+	}
+}
+
+func TestLibP2PPrivKeyEmptyIdentity(t *testing.T) {
+	var empty Identity
+	if _, err := empty.LibP2PPrivKey(); err == nil {
+		t.Fatal("expected error for identity with no private key")
+	}
+}
