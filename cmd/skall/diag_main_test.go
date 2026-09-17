@@ -88,4 +88,3 @@ func TestDirectPeerDiscovery(t *testing.T) {
 	_ = os.Remove(dbPathA)
 	_ = os.Remove(dbPathB)
 }
-

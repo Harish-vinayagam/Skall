@@ -43,7 +43,6 @@ func main() {
 		return
 	}
 
-
 	switch args[0] {
 	case "identity":
 		fmt.Println(localIdentity.Summary())
@@ -153,7 +152,6 @@ func parseListenAddr(raw string) string {
 	}
 	return raw
 }
-
 
 // runP2P starts a libp2p-backed SKALL node. It:
 //   - builds a libp2p host from the existing identity (no new keys)
@@ -387,7 +385,7 @@ func runTUI(localID identity.Identity, listenAddr string, peerAddrs []string) er
 		return fmt.Errorf("tui: open store: %w", err)
 	}
 
-	// Group manager (in-memory for now)
+	// Group manager — in-memory routing and membership
 	grpMgr := groups.NewManager()
 
 	// Chat service — bridges UI ↔ network+storage
@@ -407,4 +405,3 @@ func runTUI(localID identity.Identity, listenAddr string, peerAddrs []string) er
 	_ = db.Close()
 	return nil
 }
-

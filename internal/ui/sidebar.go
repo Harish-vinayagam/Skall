@@ -126,7 +126,6 @@ func (m sidebarModel) SelectedPeer() *chat.Peer {
 	return &p
 }
 
-
 func (m sidebarModel) View() string {
 	// Tab row
 	tabs := make([]string, tabCount)

@@ -1,9 +1,11 @@
 package identity
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadOrCreateGeneratesIdentityOnFirstRun(t *testing.T) {
@@ -157,5 +159,133 @@ func TestLibP2PPrivKeyEmptyIdentity(t *testing.T) {
 	var empty Identity
 	if _, err := empty.LibP2PPrivKey(); err == nil {
 		t.Fatal("expected error for identity with no private key")
+	}
+}
+
+func TestValidate_TamperedPublicKey(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	other, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() other error = %v", err)
+	}
+
+	// Tamper: swap public key with other's public key (keeps same peerID and privateKey)
+	id.PublicKey = other.PublicKey
+	err = id.Validate()
+	if err == nil {
+		t.Fatal("expected error when validating identity with mismatched public key")
+	}
+	if !errors.Is(err, ErrInvalidKeyPair) && !errors.Is(err, ErrPeerIDMismatch) {
+		t.Fatalf("expected ErrInvalidKeyPair or ErrPeerIDMismatch, got %v", err)
+	}
+}
+
+func TestValidate_EmptyFields(t *testing.T) {
+	var empty Identity
+	err := empty.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty identity")
+	}
+	if !errors.Is(err, ErrUnsupportedVer) {
+		t.Fatalf("expected ErrUnsupportedVer for version=0, got %v", err)
+	}
+
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	id.Username = ""
+	if err := id.Validate(); !errors.Is(err, ErrMissingRequired) {
+		t.Fatalf("expected ErrMissingRequired for empty Username, got %v", err)
+	}
+
+	id, _ = Generate()
+	id.DisplayName = "   "
+	if err := id.Validate(); !errors.Is(err, ErrMissingRequired) {
+		t.Fatalf("expected ErrMissingRequired for whitespace DisplayName, got %v", err)
+	}
+
+	id, _ = Generate()
+	id.CreatedAt = time.Time{}
+	if err := id.Validate(); !errors.Is(err, ErrMissingRequired) {
+		t.Fatalf("expected ErrMissingRequired for zero CreatedAt, got %v", err)
+	}
+}
+
+func TestValidate_UnsupportedVersion(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	id.Version = 99
+	if err := id.Validate(); !errors.Is(err, ErrUnsupportedVer) {
+		t.Fatalf("expected ErrUnsupportedVer, got %v", err)
+	}
+}
+
+func TestValidate_PeerIDMismatch(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	id.PeerID = "1234567890abcdef"
+	if err := id.Validate(); !errors.Is(err, ErrPeerIDMismatch) {
+		t.Fatalf("expected ErrPeerIDMismatch, got %v", err)
+	}
+}
+
+func TestSave_ReadOnlyDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping read-only test when running as root")
+	}
+	tempDir := t.TempDir()
+	readOnlyDir := filepath.Join(tempDir, "readonly")
+	if err := os.Mkdir(readOnlyDir, 0o500); err != nil {
+		t.Fatalf("Mkdir error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(readOnlyDir, 0o755)
+	})
+
+	store := NewStore(filepath.Join(readOnlyDir, "sub", "identity.json"))
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if err := store.Save(id); err == nil {
+		t.Fatal("expected error saving to read-only directory")
+	}
+}
+
+func TestLoadOrCreate_IsIdempotent(t *testing.T) {
+	tempDir := t.TempDir()
+	store := NewStore(filepath.Join(tempDir, "identity.json"))
+
+	first, err := store.LoadOrCreate()
+	if err != nil {
+		t.Fatalf("first LoadOrCreate() error = %v", err)
+	}
+
+	second, err := store.LoadOrCreate()
+	if err != nil {
+		t.Fatalf("second LoadOrCreate() error = %v", err)
+	}
+
+	if first.PeerID != second.PeerID {
+		t.Fatalf("expected identical PeerID on subsequent LoadOrCreate calls: %s != %s", first.PeerID, second.PeerID)
+	}
+}
+
+func TestSummary(t *testing.T) {
+	id, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	summary := id.Summary()
+	if summary == "" {
+		t.Fatal("Summary() returned empty string")
 	}
 }

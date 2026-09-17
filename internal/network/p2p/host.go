@@ -102,7 +102,6 @@ func (n *Node) Connect(ctx context.Context, pi peer.AddrInfo) error {
 
 // SendMessage opens a short-lived stream to peerID, writes msg in the SKALL
 // length-prefixed JSON framing, then closes the write side.
-// One stream per message — keeps stream lifecycle simple in Phase 8.
 func (n *Node) SendMessage(ctx context.Context, peerID peer.ID, msg protocol.Message) error {
 	if peerID == n.host.ID() {
 		return errors.New("cannot send message to self")
