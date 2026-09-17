@@ -28,7 +28,6 @@ var (
 // cannot grow the map beyond 2×maxSeenPerGroup entries between evictions.
 const maxSeenPerGroup = 10_000
 
-
 // Group represents a decentralized chat group. Members are tracked by peer ID and
 // are expected to be connected peers on the network. Group messages reuse the
 // existing protocol.Message so there is no duplicate message schema.
@@ -306,7 +305,6 @@ func (m *Manager) RouteGroupMessage(message protocol.Message, connected map[stri
 	return delivered, nil
 }
 
-
 func (m *Manager) MarkMessageSeen(groupID, messageID string) error {
 	groupID = strings.TrimSpace(groupID)
 	messageID = strings.TrimSpace(messageID)
@@ -350,7 +348,6 @@ func (m *Manager) pruneSeen(groupID string) {
 		deleted++
 	}
 }
-
 
 func (m *Manager) IsDuplicate(groupID, messageID string) bool {
 	groupID = strings.TrimSpace(groupID)

@@ -122,7 +122,6 @@ func (s *Server) Serve() error {
 	}
 }
 
-
 func (s *Server) Shutdown() error {
 	var closeErr error
 

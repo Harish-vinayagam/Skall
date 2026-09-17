@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -150,5 +151,170 @@ func TestListGroupsEmpty(t *testing.T) {
 	}
 	if len(gs) != 0 {
 		t.Fatalf("expected 0 groups, got %d", len(gs))
+	}
+}
+
+func TestSendDirect_Success(t *testing.T) {
+	svc, host, db := makeTestService(t)
+
+	remoteID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("Generate remote identity: %v", err)
+	}
+	lp2pRemote, err := remoteID.LibP2PPeerID()
+	if err != nil {
+		t.Fatalf("LibP2PPeerID error: %v", err)
+	}
+	remoteStr := lp2pRemote.String()
+
+	sub := svc.Subscribe()
+
+	if err := svc.SendDirect(remoteStr, "hello direct"); err != nil {
+		t.Fatalf("SendDirect failed: %v", err)
+	}
+
+	host.mu.Lock()
+	sentCount := len(host.sent)
+	sentMsgID := ""
+	if sentCount > 0 {
+		sentMsgID = host.sent[0].ID
+	}
+	host.mu.Unlock()
+	if sentCount != 1 {
+		t.Fatalf("expected 1 sent message in host, got %d", sentCount)
+	}
+
+	select {
+	case ev := <-sub:
+		if ev.Kind != EventNewMessage {
+			t.Errorf("expected EventNewMessage, got %v", ev.Kind)
+		}
+		if ev.Message.Body != "hello direct" {
+			t.Errorf("expected body %q, got %q", "hello direct", ev.Message.Body)
+		}
+		if !ev.Message.IsOutbound {
+			t.Errorf("expected IsOutbound=true")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for outbound event")
+	}
+
+	msgs, err := svc.GetMessages(remoteStr, 10)
+	if err != nil {
+		t.Fatalf("GetMessages error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in conversation, got %d", len(msgs))
+	}
+	stored, err := db.GetMessage(sentMsgID)
+	if err != nil {
+		t.Fatalf("db.GetMessage error: %v", err)
+	}
+	if stored.Status != storage.StatusSent {
+		t.Fatalf("expected status %s, got %s", storage.StatusSent, stored.Status)
+	}
+}
+
+func TestSendDirect_InvalidPeerResolution(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+
+	err := svc.SendDirect("invalid-peer-not-base58", "will fail resolution")
+	if err == nil {
+		t.Fatal("expected SendDirect to fail for unresolvable peer ID")
+	}
+}
+
+func TestSendGroup_Success(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+
+	_, err := svc.groups.CreateGroup("grp-test", "Test Room")
+	if err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := svc.groups.AddMember("grp-test", svc.local.PeerID); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+
+	if err := svc.SendGroup("grp-test", "hello members"); err != nil {
+		t.Fatalf("SendGroup failed: %v", err)
+	}
+
+	msgs, err := svc.GetMessages("grp-test", 10)
+	if err != nil {
+		t.Fatalf("GetMessages for group error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 group message, got %d", len(msgs))
+	}
+	if msgs[0].Body != "hello members" {
+		t.Fatalf("expected body %q, got %q", "hello members", msgs[0].Body)
+	}
+}
+
+func TestListConversations_WithMessages(t *testing.T) {
+	svc, host, _ := makeTestService(t)
+
+	inbound := protocol.NewChatMessage("remote-peer-1", svc.local.PeerID, "", "test conv")
+	host.deliver(inbound, "remote-peer-1")
+
+	convs, err := svc.ListConversations()
+	if err != nil {
+		t.Fatalf("ListConversations error: %v", err)
+	}
+	if len(convs) == 0 {
+		t.Fatal("expected at least 1 conversation")
+	}
+}
+
+func TestListPeers_Empty(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+	peers, err := svc.ListPeers()
+	if err != nil {
+		t.Fatalf("ListPeers error: %v", err)
+	}
+	if len(peers) != 0 {
+		t.Fatalf("expected 0 peers, got %d", len(peers))
+	}
+}
+
+func TestConnectedPeerCount_Zero(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+	if count := svc.ConnectedPeerCount(); count != 0 {
+		t.Fatalf("expected 0 connected peers, got %d", count)
+	}
+}
+
+func TestConcurrentSubscribeUnsubscribe(t *testing.T) {
+	svc, host, _ := makeTestService(t)
+
+	const count = 15
+	var wg sync.WaitGroup
+	wg.Add(count)
+
+	for i := 0; i < count; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			ch := svc.Subscribe()
+			time.Sleep(5 * time.Millisecond)
+			svc.Unsubscribe(ch)
+		}(i)
+	}
+
+	// Simultaneously send deliveries
+	for i := 0; i < 5; i++ {
+		msg := protocol.NewChatMessage(fmt.Sprintf("p-%d", i), svc.local.PeerID, "", "ping")
+		host.deliver(msg, "p-stub")
+	}
+
+	wg.Wait()
+}
+
+func TestClose_Idempotent(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+	if err := svc.Close(); err != nil {
+		t.Fatalf("first Close() error: %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("second Close() error: %v", err)
 	}
 }

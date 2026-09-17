@@ -437,3 +437,121 @@ func TestSetMessageHandlerReplaces(t *testing.T) {
 		t.Fatal("first (replaced) handler was called")
 	}
 }
+
+func TestSendToDisconnectedPeer(t *testing.T) {
+	a := newTestNode(t)
+	b := newTestNode(t)
+
+	ctx := context.Background()
+	if err := a.Connect(ctx, addrInfo(b)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	waitCondition(t, 2*time.Second, "connected",
+		func() bool { return len(a.ConnectedPeers()) > 0 },
+	)
+
+	// Close node b
+	_ = b.Close()
+
+	// Short pause for connection reset to propagate
+	time.Sleep(50 * time.Millisecond)
+
+	msg := testMessage(a.ID().String(), "lost message")
+	// Send to disconnected peer should fail
+	err := a.SendMessage(ctx, b.ID(), msg)
+	if err == nil {
+		t.Fatal("expected error when sending to closed/disconnected peer")
+	}
+}
+
+func TestReconnectAfterDisconnect(t *testing.T) {
+	a := newTestNode(t)
+	b := newTestNode(t)
+
+	ctx := context.Background()
+	if err := a.Connect(ctx, addrInfo(b)); err != nil {
+		t.Fatalf("Connect a->b: %v", err)
+	}
+	waitCondition(t, 2*time.Second, "connected",
+		func() bool { return len(a.ConnectedPeers()) > 0 },
+	)
+
+	// Disconnect b
+	_ = b.Close()
+
+	// Create replacement node c
+	c := newTestNode(t)
+	receivedC := make(chan protocol.Message, 1)
+	c.SetMessageHandler(func(msg protocol.Message, from peer.ID) {
+		receivedC <- msg
+	})
+
+	if err := a.Connect(ctx, addrInfo(c)); err != nil {
+		t.Fatalf("Connect a->c: %v", err)
+	}
+	waitCondition(t, 2*time.Second, "connected to c",
+		func() bool {
+			for _, p := range a.ConnectedPeers() {
+				if p == c.ID() {
+					return true
+				}
+			}
+			return false
+		},
+	)
+
+	msg := testMessage(a.ID().String(), "hello c after b disconnected")
+	if err := a.SendMessage(ctx, c.ID(), msg); err != nil {
+		t.Fatalf("SendMessage to c failed: %v", err)
+	}
+
+	select {
+	case got := <-receivedC:
+		if got.Body != msg.Body {
+			t.Fatalf("c got body %q, want %q", got.Body, msg.Body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for message on c")
+	}
+}
+
+func TestConcurrentHandlerReplacement(t *testing.T) {
+	a := newTestNode(t)
+	b := newTestNode(t)
+
+	ctx := context.Background()
+	if err := a.Connect(ctx, addrInfo(b)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	waitCondition(t, 2*time.Second, "connected",
+		func() bool { return len(a.ConnectedPeers()) > 0 },
+	)
+
+	const writers = 5
+	var wg sync.WaitGroup
+	wg.Add(writers)
+
+	stop := make(chan struct{})
+
+	for i := 0; i < writers; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					b.SetMessageHandler(func(m protocol.Message, p peer.ID) {})
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+		}(i)
+	}
+
+	for i := 0; i < 10; i++ {
+		_ = a.SendMessage(ctx, b.ID(), testMessage(a.ID().String(), "ping"))
+	}
+
+	close(stop)
+	wg.Wait()
+}

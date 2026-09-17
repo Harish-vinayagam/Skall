@@ -32,7 +32,6 @@ const (
 // a new one.
 var ErrTooManySubscribers = errors.New("too many subscribers: limit reached")
 
-
 // P2PService is the production implementation of ChatService.
 // It wires together the libp2p host, SQLite store, and groups manager.
 type P2PService struct {
@@ -128,7 +127,6 @@ func (s *P2PService) ListConversations() ([]Conversation, error) {
 			LastAt:      lastAt,
 		})
 	}
-
 
 	// Append group conversations
 	grpIDs := s.groups.ListGroups()
@@ -243,7 +241,6 @@ func (s *P2PService) SendDirect(peerID, body string) error {
 	}
 	// Cache peer name
 	s.setPeerName(peerID, peerID)
-
 
 	// Resolve libp2p peer ID and send
 	libID, err := s.skallToLibP2P(peerID)
@@ -482,7 +479,6 @@ func (s *P2PService) skallToLibP2P(skallPeerID string) (libp2ppeer.ID, error) {
 	if id, err := libp2ppeer.Decode(skallPeerID); err == nil {
 		return id, nil
 	}
-	// Fall through: we can't resolve without a DHT or address book in phase 9
 	return "", fmt.Errorf("cannot resolve skall peer id %q to libp2p peer.ID: no address book", skallPeerID)
 }
 
@@ -509,7 +505,6 @@ func (s *P2PService) storedToDisplay(sm storage.StoredMessage) DisplayMessage {
 		IsOutbound: sm.Direction == storage.DirectionOutbound,
 	}
 }
-
 
 func (s *P2PService) getPeerName(peerID string) string {
 	s.peerNamesMu.RLock()

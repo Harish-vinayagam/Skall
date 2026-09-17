@@ -3,6 +3,7 @@ package connection
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -188,5 +189,54 @@ func TestValidateEndpoint(t *testing.T) {
 	}
 	if err := ValidateEndpoint("127.0.0.1:4000"); err != nil {
 		t.Fatalf("ValidateEndpoint() unexpected error: %v", err)
+	}
+}
+
+func TestManagerConcurrentConnect(t *testing.T) {
+	dialer := newFakeDialer(t)
+	m := NewManager(dialer)
+
+	const count = 15
+	var wg sync.WaitGroup
+	wg.Add(count)
+
+	endpoint := dialer.listener.Addr().String()
+	for i := 0; i < count; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			peerID := fmt.Sprintf("peer-conc-%d", idx)
+			if err := m.Connect(context.Background(), peerID, endpoint); err != nil {
+				t.Errorf("Connect goroutine %d error: %v", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := m.Snapshot()
+		if len(snapshot) == count {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(m.Snapshot()) != count {
+		t.Fatalf("expected %d peers in snapshot, got %d", count, len(m.Snapshot()))
+	}
+}
+
+func TestManagerRapidConnectDisconnect(t *testing.T) {
+	dialer := newFakeDialer(t)
+	m := NewManager(dialer)
+
+	endpoint := dialer.listener.Addr().String()
+	for i := 0; i < 20; i++ {
+		peerID := fmt.Sprintf("peer-rapid-%d", i%3)
+		_ = m.Connect(context.Background(), peerID, endpoint)
+		if i%2 == 0 {
+			_ = m.Disconnect(peerID)
+		} else {
+			m.Forget(peerID)
+		}
 	}
 }

@@ -255,4 +255,3 @@ func TestSelectPeerFromPeersTab(t *testing.T) {
 		t.Fatalf("expected chatView.conversationID='peer-1', got %q", m.chatView.conversationID)
 	}
 }
-

@@ -296,7 +296,6 @@ func (m *AppModel) openSelected() tea.Cmd {
 	return nil
 }
 
-
 // --- background listener ---
 
 // eventChannelMsg wraps a service event for delivery to the Update loop.

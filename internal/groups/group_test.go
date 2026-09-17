@@ -1,8 +1,10 @@
 package groups
 
 import (
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
@@ -207,5 +209,165 @@ func TestDisconnectedPeerHandling(t *testing.T) {
 	if _, ok := manager.groups["g-6"]; !ok {
 		t.Fatal("group missing from manager after routing")
 	}
-	_ = time.Second
+}
+
+func TestCreateGroup_EmptyID(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("", "Friends"); !errors.Is(err, ErrInvalidGroupID) {
+		t.Fatalf("expected ErrInvalidGroupID, got %v", err)
+	}
+}
+
+func TestCreateGroup_EmptyName(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "   "); !errors.Is(err, ErrInvalidGroupName) {
+		t.Fatalf("expected ErrInvalidGroupName, got %v", err)
+	}
+}
+
+func TestCreateGroup_Duplicate(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "Friends"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if _, err := mgr.CreateGroup("g-1", "Friends 2"); !errors.Is(err, ErrGroupAlreadyExists) {
+		t.Fatalf("expected ErrGroupAlreadyExists, got %v", err)
+	}
+}
+
+func TestAddMember_DuplicatePeer(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "Friends"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.AddMember("g-1", "alice"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+	if err := mgr.AddMember("g-1", "alice"); !errors.Is(err, ErrMemberAlreadyAdded) {
+		t.Fatalf("expected ErrMemberAlreadyAdded, got %v", err)
+	}
+}
+
+func TestRemoveMember_NonexistentPeer(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "Friends"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.RemoveMember("g-1", "nonexistent"); !errors.Is(err, ErrMemberNotFound) {
+		t.Fatalf("expected ErrMemberNotFound, got %v", err)
+	}
+}
+
+func TestSendGroupMessage_EmptyBody(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "Friends"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.AddMember("g-1", "alice"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+	if _, err := mgr.SendGroupMessage("g-1", "alice", "   "); err == nil {
+		t.Fatal("expected error for empty group message body")
+	}
+}
+
+func TestIsDuplicate_UnknownGroup(t *testing.T) {
+	mgr := NewManager()
+	if mgr.IsDuplicate("unknown-group", "msg-1") {
+		t.Fatal("expected IsDuplicate to return false for unknown group")
+	}
+}
+
+func TestRouteGroupMessage_NilDeliverFn(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-1", "Friends"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.AddMember("g-1", "alice"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+	if err := mgr.AddMember("g-1", "bob"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+
+	msg, err := mgr.SendGroupMessage("g-1", "alice", "hi")
+	if err != nil {
+		t.Fatalf("SendGroupMessage error: %v", err)
+	}
+
+	delivered, err := mgr.RouteGroupMessage(msg, map[string]bool{"bob": true}, nil)
+	if err != nil {
+		t.Fatalf("RouteGroupMessage error with nil deliver: %v", err)
+	}
+	if len(delivered) != 0 {
+		t.Fatalf("expected 0 delivered with nil deliver fn, got %d", len(delivered))
+	}
+}
+
+func TestGetGroup_FoundAndNotFound(t *testing.T) {
+	mgr := NewManager()
+	_, found := mgr.GetGroup("nonexistent")
+	if found {
+		t.Fatal("expected GetGroup to return false for nonexistent group")
+	}
+
+	_, err := mgr.CreateGroup("g-1", "Alpha")
+	if err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	grp, found := mgr.GetGroup("g-1")
+	if !found {
+		t.Fatal("expected GetGroup to find g-1")
+	}
+	if grp.Name != "Alpha" {
+		t.Fatalf("expected group name Alpha, got %s", grp.Name)
+	}
+}
+
+func TestListGroups_EmptyAndPopulated(t *testing.T) {
+	mgr := NewManager()
+	if len(mgr.ListGroups()) != 0 {
+		t.Fatal("expected empty group list")
+	}
+	_, _ = mgr.CreateGroup("g-2", "Two")
+	_, _ = mgr.CreateGroup("g-1", "One")
+	list := mgr.ListGroups()
+	if len(list) != 2 || list[0] != "g-1" || list[1] != "g-2" {
+		t.Fatalf("expected sorted [g-1, g-2], got %v", list)
+	}
+}
+
+func TestConcurrentGroupOperations(t *testing.T) {
+	mgr := NewManager()
+	_, err := mgr.CreateGroup("g-concurrent", "Concurrent Test")
+	if err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+
+	const count = 20
+	var wg sync.WaitGroup
+	wg.Add(count)
+
+	for i := 0; i < count; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			peerID := fmt.Sprintf("peer-%d", idx)
+			_ = mgr.AddMember("g-concurrent", peerID)
+			_ = mgr.IsMember("g-concurrent", peerID)
+			_ = mgr.ListGroups()
+			_, _ = mgr.ViewMembers("g-concurrent")
+
+			msg := protocol.NewChatMessage(peerID, "", "g-concurrent", fmt.Sprintf("msg from %d", idx))
+			_, _ = mgr.RouteGroupMessage(msg, map[string]bool{peerID: true}, func(m protocol.Message, p string) error {
+				return nil
+			})
+			_ = mgr.MarkMessageSeen("g-concurrent", fmt.Sprintf("seen-%d", idx))
+			_ = mgr.IsDuplicate("g-concurrent", fmt.Sprintf("seen-%d", idx))
+
+			if idx%3 == 0 {
+				_ = mgr.RemoveMember("g-concurrent", peerID)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
