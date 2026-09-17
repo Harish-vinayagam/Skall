@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -19,7 +20,18 @@ import (
 const (
 	subscriberBuf = 64 // per-subscriber channel buffer
 	maxSubs       = 16 // maximum concurrent subscribers
+
+	// maxPeerIDLen is the maximum byte length we accept for a peer ID string
+	// written into the local store. Protects against absurdly long IDs from
+	// malicious peers polluting the database.
+	maxPeerIDLen = 512
 )
+
+// ErrTooManySubscribers is returned by Subscribe when the subscriber cap has
+// been reached. Callers should close an existing subscription before opening
+// a new one.
+var ErrTooManySubscribers = errors.New("too many subscribers: limit reached")
+
 
 // P2PService is the production implementation of ChatService.
 // It wires together the libp2p host, SQLite store, and groups manager.
@@ -296,9 +308,44 @@ func (s *P2PService) SendGroup(groupID, body string) error {
 func (s *P2PService) Subscribe() <-chan Event {
 	ch := make(chan Event, subscriberBuf)
 	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	if len(s.subs) >= maxSubs {
+		// Return a closed channel so callers can detect the failure without
+		// blocking. The error is also logged; callers that need the error
+		// value should use SubscribeE instead.
+		log.Printf("chat: subscriber cap (%d) reached; rejecting new subscription", maxSubs)
+		close(ch)
+		return ch
+	}
 	s.subs = append(s.subs, ch)
-	s.subsMu.Unlock()
 	return ch
+}
+
+// SubscribeE is like Subscribe but returns an error when the subscriber cap has
+// been reached instead of a closed channel.
+func (s *P2PService) SubscribeE() (<-chan Event, error) {
+	ch := make(chan Event, subscriberBuf)
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	if len(s.subs) >= maxSubs {
+		return nil, ErrTooManySubscribers
+	}
+	s.subs = append(s.subs, ch)
+	return ch, nil
+}
+
+// Unsubscribe removes the channel returned by Subscribe from the fan-out list
+// and closes it. Safe to call multiple times; subsequent calls are no-ops.
+func (s *P2PService) Unsubscribe(ch <-chan Event) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	for i, sub := range s.subs {
+		if sub == ch {
+			s.subs = append(s.subs[:i], s.subs[i+1:]...)
+			close(sub)
+			return
+		}
+	}
 }
 
 func (s *P2PService) Close() error {
@@ -316,10 +363,23 @@ func (s *P2PService) Close() error {
 
 // handleInbound is registered as the p2p.MessageHandler.
 func (s *P2PService) handleInbound(msg protocol.Message, from libp2ppeer.ID) {
-	// Map libp2p ID → SKALL PeerID heuristically via SenderID in message
-	senderID := msg.SenderID
-	if senderID == "" {
-		senderID = from.String()
+	// Security: always use the libp2p-authenticated peer ID as the canonical
+	// sender identity. The msg.SenderID field is supplied by the remote peer
+	// and must not be trusted for attribution — a connected peer could set it
+	// to any value, including another peer's ID, to impersonate them at the
+	// application layer. Libp2p Noise verifies the transport identity; we use
+	// that as the ground truth and log a mismatch for auditability.
+	authenticatedID := from.String()
+	if msg.SenderID != authenticatedID {
+		log.Printf("chat: peer %s claimed SenderID %q — overriding with authenticated ID",
+			authenticatedID, msg.SenderID)
+	}
+	senderID := authenticatedID
+
+	// Security: guard against absurdly long peer IDs before writing to the store.
+	if len(senderID) > maxPeerIDLen {
+		log.Printf("chat: rejecting inbound message: authenticated peer ID too long (%d bytes)", len(senderID))
+		return
 	}
 
 	// Persist

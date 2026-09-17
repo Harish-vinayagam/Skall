@@ -22,6 +22,13 @@ var (
 	ErrDuplicateMessage   = errors.New("duplicate group message id")
 )
 
+// maxSeenPerGroup is the maximum number of message IDs tracked in the
+// per-group deduplication set. When this cap is reached, half the entries are
+// evicted at random to bound memory use. A malicious peer spamming unique IDs
+// cannot grow the map beyond 2×maxSeenPerGroup entries between evictions.
+const maxSeenPerGroup = 10_000
+
+
 // Group represents a decentralized chat group. Members are tracked by peer ID and
 // are expected to be connected peers on the network. Group messages reuse the
 // existing protocol.Message so there is no duplicate message schema.
@@ -270,6 +277,8 @@ func (m *Manager) RouteGroupMessage(message protocol.Message, connected map[stri
 		return nil, fmt.Errorf("%w: %s", ErrDuplicateMessage, message.ID)
 	}
 	m.seen[message.GroupID][message.ID] = struct{}{}
+	// Security: prune if the seen set exceeds the cap to prevent unbounded growth.
+	m.pruneSeen(message.GroupID)
 	m.mu.Unlock()
 
 	// Route only to remaining active members that are connected and are not the sender.
@@ -297,6 +306,7 @@ func (m *Manager) RouteGroupMessage(message protocol.Message, connected map[stri
 	return delivered, nil
 }
 
+
 func (m *Manager) MarkMessageSeen(groupID, messageID string) error {
 	groupID = strings.TrimSpace(groupID)
 	messageID = strings.TrimSpace(messageID)
@@ -316,8 +326,31 @@ func (m *Manager) MarkMessageSeen(groupID, messageID string) error {
 		m.seen[groupID] = make(map[string]struct{})
 	}
 	m.seen[groupID][messageID] = struct{}{}
+	// Security: prune after every insertion to keep memory bounded.
+	m.pruneSeen(groupID)
 	return nil
 }
+
+// pruneSeen evicts half the entries from the seen set for groupID when it
+// exceeds maxSeenPerGroup. Must be called with m.mu held.
+func (m *Manager) pruneSeen(groupID string) {
+	s := m.seen[groupID]
+	if len(s) <= maxSeenPerGroup {
+		return
+	}
+	// Evict approximately half the entries. Go map iteration order is random,
+	// which gives us a reasonable spread without additional bookkeeping.
+	toDelete := len(s) / 2
+	deleted := 0
+	for k := range s {
+		if deleted >= toDelete {
+			break
+		}
+		delete(s, k)
+		deleted++
+	}
+}
+
 
 func (m *Manager) IsDuplicate(groupID, messageID string) bool {
 	groupID = strings.TrimSpace(groupID)

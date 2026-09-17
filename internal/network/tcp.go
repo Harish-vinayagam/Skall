@@ -3,6 +3,7 @@ package network
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -15,6 +16,11 @@ import (
 	"github.com/Harish-vinayagam/Skall/internal/identity"
 	"github.com/Harish-vinayagam/Skall/internal/protocol"
 )
+
+// maxConnections is the maximum number of simultaneous TCP clients the server
+// will accept. Connections beyond this limit are closed immediately to prevent
+// resource exhaustion from a malicious or misbehaving client.
+const maxConnections = 256
 
 type Server struct {
 	address string
@@ -95,15 +101,27 @@ func (s *Server) Serve() error {
 			return err
 		}
 
+		// Security: reject connections that would exceed the per-server limit.
+		s.mu.RLock()
+		count := len(s.clients)
+		s.mu.RUnlock()
+		if count >= maxConnections {
+			log.Printf("network: connection limit (%d) reached; rejecting %s",
+				maxConnections, conn.RemoteAddr())
+			_ = conn.Close()
+			continue
+		}
+
 		client := newClientConn(s, conn)
 		s.addClient(client)
-		fmt.Println("Client connected:", conn.RemoteAddr())
+		log.Printf("network: client connected: %s", conn.RemoteAddr())
 
 		s.wg.Add(2)
 		go client.readLoop()
 		go client.writeLoop()
 	}
 }
+
 
 func (s *Server) Shutdown() error {
 	var closeErr error
