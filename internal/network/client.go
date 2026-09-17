@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -41,23 +42,33 @@ func newClientConn(server *Server, conn net.Conn) *clientConn {
 	}
 }
 
+// readDeadline is the maximum idle time before a TCP connection is considered
+// stale and closed. An idle client that never sends data would otherwise hold
+// a goroutine pair and file descriptor indefinitely.
+const readDeadline = 30 * time.Second
+
 func (c *clientConn) readLoop() {
 	defer c.server.wg.Done()
 	defer c.server.removeClient(c)
 
 	reader := protocol.NewFrameReader(c.conn)
 	for {
+		// Security: refresh the read deadline on every iteration so that
+		// *idle* clients (connected but silent) are eventually evicted.
+		if err := c.conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
+			return
+		}
 		message, err := reader.ReadMessage()
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			fmt.Println("Client read error:", c.remote, err)
+			log.Printf("network: client read error %s: %v", c.remote, err)
 			return
 		}
 
 		if err := message.Validate(); err != nil {
-			fmt.Println("Rejected message from", c.remote, ":", err)
+			log.Printf("network: rejected message from %s: %v", c.remote, err)
 			continue
 		}
 
@@ -68,7 +79,7 @@ func (c *clientConn) readLoop() {
 			c.server.registerPeer(c, c.peerID)
 		}
 
-		fmt.Printf("%s: %s\n", c.remote, message.Body)
+		log.Printf("network: %s: %s", c.remote, message.Body)
 		c.server.broadcast(c, message)
 	}
 }

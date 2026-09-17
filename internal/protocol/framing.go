@@ -7,7 +7,19 @@ import (
 	"io"
 )
 
-const frameHeaderSize = 4
+const (
+	frameHeaderSize = 4
+
+	// MaxFrameSize is the largest message payload SKALL will read from the wire.
+	// A remote peer claiming a frame larger than this is either buggy or
+	// malicious; reject it immediately without allocating the buffer.
+	// 1 MiB is ample for any legitimate chat message.
+	MaxFrameSize = 1 << 20 // 1 MiB
+)
+
+// ErrFrameTooLarge is returned when an incoming frame header declares a
+// payload that exceeds MaxFrameSize.
+var ErrFrameTooLarge = fmt.Errorf("frame exceeds maximum allowed size (%d bytes)", MaxFrameSize)
 
 type FrameWriter struct {
 	w io.Writer
@@ -49,6 +61,11 @@ func (r *FrameReader) ReadMessage() (Message, error) {
 	length := binary.BigEndian.Uint32(header[:])
 	if length == 0 {
 		return Message{}, fmt.Errorf("%w: empty frame", ErrInvalidJSON)
+	}
+	// Security: reject oversized frames before allocating. Without this cap a
+	// malicious peer can trigger make([]byte, 4 GiB) → OOM / panic.
+	if length > MaxFrameSize {
+		return Message{}, fmt.Errorf("%w: declared %d bytes", ErrFrameTooLarge, length)
 	}
 
 	payload := make([]byte, length)
