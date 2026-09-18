@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Store struct {
@@ -17,8 +18,11 @@ func NewStore(path string) *Store {
 }
 
 func DefaultPath() (string, error) {
-	if override := os.Getenv("SKALL_IDENTITY_PATH"); override != "" {
+	if override := strings.TrimSpace(os.Getenv("SKALL_IDENTITY_PATH")); override != "" {
 		return override, nil
+	}
+	if dataDir := strings.TrimSpace(os.Getenv("SKALL_DATA_DIR")); dataDir != "" {
+		return filepath.Join(dataDir, "identity.json"), nil
 	}
 
 	configDir, err := os.UserConfigDir()

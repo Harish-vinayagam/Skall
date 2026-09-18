@@ -144,6 +144,9 @@ func DefaultPath() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SKALL_DB_PATH")); override != "" {
 		return override, nil
 	}
+	if dataDir := strings.TrimSpace(os.Getenv("SKALL_DATA_DIR")); dataDir != "" {
+		return filepath.Join(dataDir, "skall.db"), nil
+	}
 
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -186,6 +189,9 @@ func Open(path string) (*Store, error) {
 	if err := store.initialize(); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		_ = os.Chmod(path, 0o600)
 	}
 	return store, nil
 }
