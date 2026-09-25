@@ -178,6 +178,24 @@ func (m *Manager) removeMember(groupID, peerID string) error {
 	return nil
 }
 
+// DeleteGroup removes a group and its deduplication state from the Manager.
+// Returns ErrGroupNotFound when no group with that ID exists.
+func (m *Manager) DeleteGroup(groupID string) error {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return ErrInvalidGroupID
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.groups[groupID]; !exists {
+		return fmt.Errorf("%w: %s", ErrGroupNotFound, groupID)
+	}
+	delete(m.groups, groupID)
+	delete(m.seen, groupID)
+	return nil
+}
+
 func (m *Manager) ViewMembers(groupID string) ([]string, error) {
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {

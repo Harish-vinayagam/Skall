@@ -371,3 +371,75 @@ func TestConcurrentGroupOperations(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestDeleteGroup verifies that a group is removed from the manager after deletion.
+func TestDeleteGroup(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-del", "Delete Me"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.AddMember("g-del", "alice"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+
+	if err := mgr.DeleteGroup("g-del"); err != nil {
+		t.Fatalf("DeleteGroup error: %v", err)
+	}
+
+	// Group should no longer exist.
+	if _, found := mgr.GetGroup("g-del"); found {
+		t.Fatal("group still exists in manager after DeleteGroup")
+	}
+	ids := mgr.ListGroups()
+	for _, id := range ids {
+		if id == "g-del" {
+			t.Fatal("g-del still appears in ListGroups after DeleteGroup")
+		}
+	}
+}
+
+// TestDeleteGroup_NotFound verifies that deleting a non-existent group
+// returns ErrGroupNotFound.
+func TestDeleteGroup_NotFound(t *testing.T) {
+	mgr := NewManager()
+	if err := mgr.DeleteGroup("does-not-exist"); !errors.Is(err, ErrGroupNotFound) {
+		t.Fatalf("expected ErrGroupNotFound, got %v", err)
+	}
+}
+
+// TestDeleteGroup_EmptyID verifies that an empty group ID is rejected.
+func TestDeleteGroup_EmptyID(t *testing.T) {
+	mgr := NewManager()
+	if err := mgr.DeleteGroup("   "); !errors.Is(err, ErrInvalidGroupID) {
+		t.Fatalf("expected ErrInvalidGroupID, got %v", err)
+	}
+}
+
+// TestDeleteGroup_ClearsSeen verifies that after deletion the seen-ID set is
+// cleared so a reinstated group does not inherit old deduplication state.
+func TestDeleteGroup_ClearsSeen(t *testing.T) {
+	mgr := NewManager()
+	if _, err := mgr.CreateGroup("g-seen", "Seen Clear"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := mgr.AddMember("g-seen", "alice"); err != nil {
+		t.Fatalf("AddMember error: %v", err)
+	}
+	// Mark a message as seen.
+	if err := mgr.MarkMessageSeen("g-seen", "msg-999"); err != nil {
+		t.Fatalf("MarkMessageSeen error: %v", err)
+	}
+	if !mgr.IsDuplicate("g-seen", "msg-999") {
+		t.Fatal("expected msg-999 to be a duplicate before delete")
+	}
+
+	// Delete the group.
+	if err := mgr.DeleteGroup("g-seen"); err != nil {
+		t.Fatalf("DeleteGroup error: %v", err)
+	}
+
+	// After deletion IsDuplicate must return false (no group → no seen set).
+	if mgr.IsDuplicate("g-seen", "msg-999") {
+		t.Fatal("IsDuplicate should return false after group is deleted")
+	}
+}

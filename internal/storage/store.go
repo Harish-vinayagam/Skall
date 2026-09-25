@@ -479,6 +479,53 @@ func (s *Store) ListGroups() ([]Group, error) {
 	return groups, nil
 }
 
+// GetGroup returns the group with the given ID. Returns sql.ErrNoRows when not found.
+func (s *Store) GetGroup(groupID string) (Group, error) {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return Group{}, errors.New("group id is required")
+	}
+
+	var g Group
+	var createdRaw, updatedRaw string
+	err := s.db.QueryRow(
+		`SELECT group_id, name, created_at, updated_at FROM groups WHERE group_id = ?;`,
+		groupID,
+	).Scan(&g.GroupID, &g.Name, &createdRaw, &updatedRaw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Group{}, sql.ErrNoRows
+		}
+		return Group{}, classifyDBError("get group", err)
+	}
+	g.CreatedAt = mustParseTime(createdRaw)
+	g.UpdatedAt = mustParseTime(updatedRaw)
+	return g, nil
+}
+
+// DeleteGroup removes a group and all its memberships from the database.
+// The group_memberships rows are removed via the ON DELETE CASCADE foreign key.
+// Returns sql.ErrNoRows when no group with that ID exists.
+func (s *Store) DeleteGroup(groupID string) error {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return errors.New("group id is required")
+	}
+
+	res, err := s.db.Exec(`DELETE FROM groups WHERE group_id = ?;`, groupID)
+	if err != nil {
+		return classifyDBError("delete group", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return classifyDBError("check delete group rows", err)
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) ListGroupMembers(groupID string) ([]GroupMembership, error) {
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {
