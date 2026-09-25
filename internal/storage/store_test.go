@@ -401,3 +401,154 @@ func TestUpsertIdentityMetadata(t *testing.T) {
 		t.Fatalf("second UpsertIdentityMetadata() error = %v", err)
 	}
 }
+
+// TestGetGroup verifies that a persisted group can be fetched by ID.
+func TestGetGroup(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	created := time.Unix(1710010000, 0).UTC()
+	if err := store.UpsertGroup("grp-get-1", "Get Me", created); err != nil {
+		t.Fatalf("UpsertGroup() error = %v", err)
+	}
+
+	g, err := store.GetGroup("grp-get-1")
+	if err != nil {
+		t.Fatalf("GetGroup() error = %v", err)
+	}
+	if g.GroupID != "grp-get-1" || g.Name != "Get Me" {
+		t.Fatalf("GetGroup() mismatch: %+v", g)
+	}
+}
+
+// TestGetGroup_NotFound verifies sql.ErrNoRows is returned for missing groups.
+func TestGetGroup_NotFound(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.GetGroup("does-not-exist")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+// TestDeleteGroup verifies that deleting a group removes it and cascades
+// to the group_memberships table.
+func TestDeleteGroup(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	created := time.Unix(1710011000, 0).UTC()
+	if err := store.UpsertGroup("grp-del-1", "Delete Me", created); err != nil {
+		t.Fatalf("UpsertGroup() error = %v", err)
+	}
+	if err := store.SetGroupMembership("grp-del-1", "alice", created, true, created); err != nil {
+		t.Fatalf("SetGroupMembership() error = %v", err)
+	}
+
+	if err := store.DeleteGroup("grp-del-1"); err != nil {
+		t.Fatalf("DeleteGroup() error = %v", err)
+	}
+
+	// Group must be gone.
+	if _, err := store.GetGroup("grp-del-1"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows after delete, got %v", err)
+	}
+
+	// Memberships must be gone (CASCADE).
+	members, err := store.ListGroupMembers("grp-del-1")
+	if err != nil {
+		t.Fatalf("ListGroupMembers() after delete error = %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("expected 0 members after group delete, got %d", len(members))
+	}
+}
+
+// TestDeleteGroup_NotFound verifies sql.ErrNoRows is returned when the group
+// does not exist.
+func TestDeleteGroup_NotFound(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	err := store.DeleteGroup("never-existed")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+// TestPaginatedMessages verifies that the limit parameter is honoured for both
+// direct and group conversation queries.
+func TestPaginatedMessages(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	t0 := time.Unix(1710020000, 0).UTC()
+
+	// Insert 10 direct messages between alice and bob.
+	for i := 1; i <= 10; i++ {
+		msg := protocol.Message{
+			Version:     protocol.Version,
+			ID:          fmt.Sprintf("direct-page-%d", i),
+			Type:        protocol.TypeChat,
+			SenderID:    "alice",
+			RecipientID: "bob",
+			Timestamp:   t0.Add(time.Duration(i) * time.Second),
+			Body:        fmt.Sprintf("direct msg %d", i),
+		}
+		if err := store.InsertMessage(msg, DirectionOutbound, StatusSent); err != nil {
+			t.Fatalf("InsertMessage(direct-%d) error = %v", i, err)
+		}
+	}
+
+	// Fetch with limit=5.
+	page, err := store.ListDirectConversation("alice", "bob", 5)
+	if err != nil {
+		t.Fatalf("ListDirectConversation(limit=5) error = %v", err)
+	}
+	if len(page) != 5 {
+		t.Fatalf("expected 5 messages with limit=5, got %d", len(page))
+	}
+	// Must be in chronological order (oldest first).
+	if page[0].Message.ID != "direct-page-1" || page[4].Message.ID != "direct-page-5" {
+		t.Fatalf("unexpected ordering: first=%s last=%s", page[0].Message.ID, page[4].Message.ID)
+	}
+
+	// Insert 8 group messages.
+	for i := 1; i <= 8; i++ {
+		msg := protocol.Message{
+			Version:   protocol.Version,
+			ID:        fmt.Sprintf("group-page-%d", i),
+			Type:      protocol.TypeChat,
+			SenderID:  fmt.Sprintf("member-%d", i),
+			GroupID:   "grp-page",
+			Timestamp: t0.Add(time.Duration(i) * time.Second),
+			Body:      fmt.Sprintf("group msg %d", i),
+		}
+		if err := store.InsertMessage(msg, DirectionInbound, StatusReceived); err != nil {
+			t.Fatalf("InsertMessage(group-%d) error = %v", i, err)
+		}
+	}
+
+	// Fetch with limit=3.
+	gpage, err := store.ListGroupConversation("grp-page", 3)
+	if err != nil {
+		t.Fatalf("ListGroupConversation(limit=3) error = %v", err)
+	}
+	if len(gpage) != 3 {
+		t.Fatalf("expected 3 group messages with limit=3, got %d", len(gpage))
+	}
+	if gpage[0].Message.ID != "group-page-1" || gpage[2].Message.ID != "group-page-3" {
+		t.Fatalf("unexpected group ordering: first=%s last=%s", gpage[0].Message.ID, gpage[2].Message.ID)
+	}
+}
+
+// TestDeleteGroup_EmptyID verifies that an empty group ID is rejected.
+func TestDeleteGroup_EmptyID(t *testing.T) {
+	store := openTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	if err := store.DeleteGroup("  "); err == nil {
+		t.Fatal("expected error for empty group id")
+	}
+}

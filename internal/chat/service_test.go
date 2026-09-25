@@ -318,3 +318,159 @@ func TestClose_Idempotent(t *testing.T) {
 		t.Fatalf("second Close() error: %v", err)
 	}
 }
+
+// --- Group management persistence tests ---
+
+// TestCreateGroup_PersistsToStore verifies that CreateGroup writes the group to
+// the SQLite store as well as the in-memory manager.
+func TestCreateGroup_PersistsToStore(t *testing.T) {
+	svc, _, db := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-1", "Persist Group"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+
+	// Verify in-memory state.
+	if _, ok := svc.groups.GetGroup("svc-g-1"); !ok {
+		t.Fatal("group not found in in-memory manager after CreateGroup")
+	}
+
+	// Verify persisted to DB.
+	g, err := db.GetGroup("svc-g-1")
+	if err != nil {
+		t.Fatalf("db.GetGroup error: %v", err)
+	}
+	if g.Name != "Persist Group" {
+		t.Fatalf("expected name %q, got %q", "Persist Group", g.Name)
+	}
+}
+
+// TestCreateGroup_DuplicateRejected verifies that creating a group with an
+// already-existing ID returns an error.
+func TestCreateGroup_DuplicateRejected(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-dup", "Original"); err != nil {
+		t.Fatalf("first CreateGroup error: %v", err)
+	}
+	if err := svc.CreateGroup("svc-g-dup", "Duplicate"); err == nil {
+		t.Fatal("expected error for duplicate group ID, got nil")
+	}
+}
+
+// TestJoinGroup_PersistsMembership verifies that JoinGroup writes the
+// membership to the store and is idempotent.
+func TestJoinGroup_PersistsMembership(t *testing.T) {
+	svc, _, db := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-join", "Join Test"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+
+	// Join once.
+	if err := svc.JoinGroup("svc-g-join", "alice"); err != nil {
+		t.Fatalf("JoinGroup error: %v", err)
+	}
+
+	members, err := db.ListGroupMembers("svc-g-join")
+	if err != nil {
+		t.Fatalf("db.ListGroupMembers error: %v", err)
+	}
+	if len(members) != 1 || members[0].PeerID != "alice" || !members[0].Active {
+		t.Fatalf("unexpected members after join: %+v", members)
+	}
+
+	// Join again — must be idempotent (no error, membership still active).
+	if err := svc.JoinGroup("svc-g-join", "alice"); err != nil {
+		t.Fatalf("idempotent JoinGroup error: %v", err)
+	}
+	members, _ = db.ListGroupMembers("svc-g-join")
+	active := 0
+	for _, m := range members {
+		if m.PeerID == "alice" && m.Active {
+			active++
+		}
+	}
+	if active != 1 {
+		t.Fatalf("expected exactly 1 active alice membership, got %d", active)
+	}
+}
+
+// TestLeaveGroup_MarksInactiveInStore verifies that LeaveGroup sets active=false
+// in the store while retaining the membership row.
+func TestLeaveGroup_MarksInactiveInStore(t *testing.T) {
+	svc, _, db := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-leave", "Leave Test"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := svc.JoinGroup("svc-g-leave", "bob"); err != nil {
+		t.Fatalf("JoinGroup error: %v", err)
+	}
+	if err := svc.LeaveGroup("svc-g-leave", "bob"); err != nil {
+		t.Fatalf("LeaveGroup error: %v", err)
+	}
+
+	// Membership row must still exist in DB but with active=false.
+	members, err := db.ListGroupMembers("svc-g-leave")
+	if err != nil {
+		t.Fatalf("db.ListGroupMembers error: %v", err)
+	}
+	if len(members) != 1 {
+		t.Fatalf("expected 1 membership row after leave, got %d", len(members))
+	}
+	if members[0].Active {
+		t.Fatal("expected active=false after LeaveGroup, got true")
+	}
+
+	// In-memory manager should no longer report bob as a member.
+	if svc.groups.IsMember("svc-g-leave", "bob") {
+		t.Fatal("bob still reported as member after LeaveGroup")
+	}
+}
+
+// TestDeleteGroup_PersistsToStore verifies that DeleteGroup removes the group
+// from both memory and DB (including CASCADE on memberships).
+func TestDeleteGroup_PersistsToStore(t *testing.T) {
+	svc, _, db := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-del", "Delete Test"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	if err := svc.JoinGroup("svc-g-del", "charlie"); err != nil {
+		t.Fatalf("JoinGroup error: %v", err)
+	}
+	if err := svc.DeleteGroup("svc-g-del"); err != nil {
+		t.Fatalf("DeleteGroup error: %v", err)
+	}
+
+	// Must be gone from in-memory manager.
+	if _, ok := svc.groups.GetGroup("svc-g-del"); ok {
+		t.Fatal("group still in manager after DeleteGroup")
+	}
+
+	// Must be gone from DB.
+	if _, err := db.GetGroup("svc-g-del"); err == nil {
+		t.Fatal("expected error from db.GetGroup after delete, got nil")
+	}
+
+	// Membership must also be gone (CASCADE).
+	members, _ := db.ListGroupMembers("svc-g-del")
+	if len(members) != 0 {
+		t.Fatalf("expected 0 members in DB after delete, got %d", len(members))
+	}
+}
+
+// TestLeaveGroup_Idempotent verifies that calling LeaveGroup when the member
+// is not in memory (but the group exists) does not return an error.
+func TestLeaveGroup_Idempotent(t *testing.T) {
+	svc, _, _ := makeTestService(t)
+
+	if err := svc.CreateGroup("svc-g-idem-leave", "Idem Leave"); err != nil {
+		t.Fatalf("CreateGroup error: %v", err)
+	}
+	// Leave without ever joining — should be idempotent, not an error.
+	if err := svc.LeaveGroup("svc-g-idem-leave", "dave"); err != nil {
+		t.Fatalf("LeaveGroup on non-member error: %v", err)
+	}
+}

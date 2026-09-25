@@ -45,10 +45,14 @@ func (m *mockService) ListPeers() ([]chat.Peer, error)   { return m.peers, nil }
 func (m *mockService) GetMessages(id string, _ int) ([]chat.DisplayMessage, error) {
 	return m.messages[id], nil
 }
-func (m *mockService) SendDirect(_, _ string) error { return m.sendDirectErr }
-func (m *mockService) SendGroup(_, _ string) error  { return m.sendGroupErr }
-func (m *mockService) Subscribe() <-chan chat.Event { return m.subCh }
-func (m *mockService) Close() error                 { close(m.subCh); return nil }
+func (m *mockService) SendDirect(_, _ string) error  { return m.sendDirectErr }
+func (m *mockService) SendGroup(_, _ string) error   { return m.sendGroupErr }
+func (m *mockService) CreateGroup(_, _ string) error { return nil }
+func (m *mockService) JoinGroup(_, _ string) error   { return nil }
+func (m *mockService) LeaveGroup(_, _ string) error  { return nil }
+func (m *mockService) DeleteGroup(_ string) error    { return nil }
+func (m *mockService) Subscribe() <-chan chat.Event  { return m.subCh }
+func (m *mockService) Close() error                  { close(m.subCh); return nil }
 
 // helper: build an AppModel and fire Init commands synchronously (no real I/O).
 func buildApp(t *testing.T, svc chat.ChatService) AppModel {

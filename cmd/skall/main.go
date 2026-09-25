@@ -661,6 +661,13 @@ func runTUI(localID identity.Identity, cfg config.Config, listenAddr string, pee
 	}
 
 	grpMgr := groups.NewManager()
+
+	// Restore persisted groups and their active memberships from SQLite so that
+	// groups survive application restarts.
+	if err := groups.LoadFromStore(db, grpMgr); err != nil {
+		log.Printf("skall: restore groups from store: %v", err)
+	}
+
 	svc := chat.NewP2PService(ctx, localID, node, db, grpMgr)
 
 	app := ui.New(svc)

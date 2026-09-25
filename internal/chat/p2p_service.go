@@ -302,6 +302,76 @@ func (s *P2PService) SendGroup(groupID, body string) error {
 	return nil
 }
 
+// CreateGroup creates a new group in the in-memory manager and persists it to
+// the SQLite store so it survives a restart.
+func (s *P2PService) CreateGroup(groupID, name string) error {
+	g, err := s.groups.CreateGroup(groupID, name)
+	if err != nil {
+		return err
+	}
+	if err := s.store.UpsertGroup(g.ID, g.Name, g.CreatedAt); err != nil {
+		return fmt.Errorf("chat: persist group: %w", err)
+	}
+	return nil
+}
+
+// JoinGroup adds peerID as an active member of groupID in both the in-memory
+// manager and the SQLite store.
+// If peerID is already a member of the in-memory group the AddMember call
+// returns ErrMemberAlreadyAdded; the store is still updated (upsert) so the
+// membership is guaranteed to be active in the database.
+func (s *P2PService) JoinGroup(groupID, peerID string) error {
+	now := s.now()
+
+	// Try to add in memory; ignore ErrMemberAlreadyAdded (idempotent).
+	if err := s.groups.AddMember(groupID, peerID); err != nil && err.Error() != groups.ErrMemberAlreadyAdded.Error() {
+		// Re-check with errors.Is since the error is wrapped with the peer ID.
+		if !isErrMemberAlreadyAdded(err) {
+			return err
+		}
+	}
+
+	// Always persist — upsert ensures the membership is marked active.
+	if err := s.store.SetGroupMembership(groupID, peerID, now, true, now); err != nil {
+		return fmt.Errorf("chat: persist membership: %w", err)
+	}
+	return nil
+}
+
+// LeaveGroup removes peerID from the in-memory member set and marks the
+// membership inactive in the SQLite store (active=false). The row is kept so
+// that message history is retained.
+func (s *P2PService) LeaveGroup(groupID, peerID string) error {
+	// Remove from in-memory manager; ignore ErrMemberNotFound (idempotent).
+	if err := s.groups.LeaveGroup(groupID, peerID); err != nil {
+		if !isErrMemberNotFound(err) {
+			return err
+		}
+	}
+
+	// Mark inactive in the store (upsert with active=false).
+	now := s.now()
+	if err := s.store.SetGroupMembership(groupID, peerID, now, false, now); err != nil {
+		return fmt.Errorf("chat: persist leave membership: %w", err)
+	}
+	return nil
+}
+
+// DeleteGroup removes a group from both the in-memory manager and the SQLite
+// store. The store deletion cascades to group_memberships rows.
+func (s *P2PService) DeleteGroup(groupID string) error {
+	// Remove from memory first; ignore ErrGroupNotFound (idempotent).
+	if err := s.groups.DeleteGroup(groupID); err != nil {
+		if !isErrGroupNotFound(err) {
+			return err
+		}
+	}
+	if err := s.store.DeleteGroup(groupID); err != nil {
+		return fmt.Errorf("chat: delete group from store: %w", err)
+	}
+	return nil
+}
+
 func (s *P2PService) Subscribe() <-chan Event {
 	ch := make(chan Event, subscriberBuf)
 	s.subsMu.Lock()
@@ -534,4 +604,25 @@ func shortID(id string) string {
 		return id
 	}
 	return id[:8] + "…"
+}
+
+// now returns the current UTC time. It is a method so tests can override it
+// via composition in the future; for now it simply wraps time.Now().
+func (s *P2PService) now() time.Time {
+	return time.Now().UTC()
+}
+
+// isErrMemberAlreadyAdded returns true when err is (or wraps) ErrMemberAlreadyAdded.
+func isErrMemberAlreadyAdded(err error) bool {
+	return errors.Is(err, groups.ErrMemberAlreadyAdded)
+}
+
+// isErrMemberNotFound returns true when err is (or wraps) ErrMemberNotFound.
+func isErrMemberNotFound(err error) bool {
+	return errors.Is(err, groups.ErrMemberNotFound)
+}
+
+// isErrGroupNotFound returns true when err is (or wraps) ErrGroupNotFound.
+func isErrGroupNotFound(err error) bool {
+	return errors.Is(err, groups.ErrGroupNotFound)
 }
