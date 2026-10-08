@@ -5,10 +5,24 @@ import (
 	"fmt"
 
 	libp2p "github.com/libp2p/go-libp2p"
+	libpeer "github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/Harish-vinayagam/Skall/internal/identity"
 )
+
+// NodeOptions configures optional libp2p host features.
+type NodeOptions struct {
+	ListenAddrs      []string
+	EnableMDNS       bool
+	EnableNATPortMap bool
+	EnableAutoNAT    bool
+	EnableRelay      bool
+	EnableHolePunch  bool
+	AdvertisedAddrs  []string
+	StaticRelayPeers []libpeer.AddrInfo
+}
 
 // DefaultListenAddrs are the multiaddrs a SKALL node listens on by default.
 // TCP on a random port on all interfaces (IPv4 + IPv6).
@@ -32,8 +46,17 @@ const MDNSServiceName = "_skall._p2p._udp"
 //   - enables NATPortMap for NAT traversal where available
 //   - runs libp2p mDNS discovery for automatic peer finding on the LAN
 func BuildNode(ctx context.Context, id identity.Identity, listenAddrs []string) (*Node, error) {
-	if len(listenAddrs) == 0 {
-		listenAddrs = DefaultListenAddrs
+	return BuildNodeWithOptions(ctx, id, NodeOptions{
+		ListenAddrs:      listenAddrs,
+		EnableMDNS:       true,
+		EnableNATPortMap: true,
+	})
+}
+
+// BuildNodeWithOptions creates a Node with explicit feature flags.
+func BuildNodeWithOptions(ctx context.Context, id identity.Identity, opts NodeOptions) (*Node, error) {
+	if len(opts.ListenAddrs) == 0 {
+		opts.ListenAddrs = DefaultListenAddrs
 	}
 
 	// Convert the SKALL ed25519 identity to a libp2p crypto key.
@@ -43,28 +66,62 @@ func BuildNode(ctx context.Context, id identity.Identity, listenAddrs []string) 
 		return nil, fmt.Errorf("p2p: build node: convert identity key: %w", err)
 	}
 
-	h, err := libp2p.New(
+	libp2pOpts := []libp2p.Option{
 		libp2p.Identity(lp2pPriv),
-		libp2p.ListenAddrStrings(listenAddrs...),
-		libp2p.NATPortMap(),
-	)
+		libp2p.ListenAddrStrings(opts.ListenAddrs...),
+	}
+	if opts.EnableNATPortMap {
+		libp2pOpts = append(libp2pOpts, libp2p.NATPortMap())
+	}
+	if opts.EnableAutoNAT {
+		libp2pOpts = append(libp2pOpts, libp2p.EnableAutoNATv2())
+	}
+	if opts.EnableRelay {
+		if len(opts.StaticRelayPeers) > 0 {
+			libp2pOpts = append(libp2pOpts, libp2p.EnableAutoRelayWithStaticRelays(opts.StaticRelayPeers))
+		} else {
+			libp2pOpts = append(libp2pOpts, libp2p.EnableAutoRelay())
+		}
+	}
+	if opts.EnableHolePunch {
+		libp2pOpts = append(libp2pOpts, libp2p.EnableHolePunching())
+	}
+	if len(opts.AdvertisedAddrs) > 0 {
+		advertised := make([]ma.Multiaddr, 0, len(opts.AdvertisedAddrs))
+		for _, raw := range opts.AdvertisedAddrs {
+			addr, err := ma.NewMultiaddr(raw)
+			if err != nil {
+				return nil, fmt.Errorf("p2p: build node: invalid advertised address %q: %w", raw, err)
+			}
+			advertised = append(advertised, addr)
+		}
+		libp2pOpts = append(libp2pOpts, libp2p.AddrsFactory(func(_ []ma.Multiaddr) []ma.Multiaddr {
+			out := make([]ma.Multiaddr, len(advertised))
+			copy(out, advertised)
+			return out
+		}))
+	}
+
+	h, err := libp2p.New(libp2pOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: build node: create libp2p host: %w", err)
 	}
 
 	node := newNode(h)
 
-	// Start libp2p mDNS discovery. HandlePeerFound on the notifee is called
-	// whenever a peer is seen on the LAN; it calls node.Connect automatically.
-	notifee := &mdnsNotifee{node: node, ctx: ctx}
-	svc := mdns.NewMdnsService(h, MDNSServiceName, notifee)
-	if err := svc.Start(); err != nil {
-		// mDNS failure is non-fatal — the node still works for direct connections.
-		// Log and continue rather than returning an error.
-		_ = h.Close()
-		return nil, fmt.Errorf("p2p: build node: start mDNS: %w", err)
+	if opts.EnableMDNS {
+		// Start libp2p mDNS discovery. HandlePeerFound on the notifee is called
+		// whenever a peer is seen on the LAN; it calls node.Connect automatically.
+		notifee := &mdnsNotifee{node: node, ctx: ctx}
+		svc := mdns.NewMdnsService(h, MDNSServiceName, notifee)
+		if err := svc.Start(); err != nil {
+			// mDNS failure is non-fatal — the node still works for direct connections.
+			// Log and continue rather than returning an error.
+			_ = h.Close()
+			return nil, fmt.Errorf("p2p: build node: start mDNS: %w", err)
+		}
+		node.mdnsSvc = svc
 	}
-	node.mdnsSvc = svc
 
 	return node, nil
 }
@@ -73,22 +130,9 @@ func BuildNode(ctx context.Context, id identity.Identity, listenAddrs []string) 
 // This is used in tests where real mDNS would be noise, and for cases where
 // the caller manages peer discovery externally.
 func BuildNodeNoMDNS(_ context.Context, id identity.Identity, listenAddrs []string) (*Node, error) {
-	if len(listenAddrs) == 0 {
-		listenAddrs = DefaultListenAddrs
-	}
-
-	lp2pPriv, err := id.LibP2PPrivKey()
-	if err != nil {
-		return nil, fmt.Errorf("p2p: build node (no mdns): convert identity key: %w", err)
-	}
-
-	h, err := libp2p.New(
-		libp2p.Identity(lp2pPriv),
-		libp2p.ListenAddrStrings(listenAddrs...),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("p2p: build node (no mdns): create libp2p host: %w", err)
-	}
-
-	return newNode(h), nil
+	return BuildNodeWithOptions(context.Background(), id, NodeOptions{
+		ListenAddrs:      listenAddrs,
+		EnableMDNS:       false,
+		EnableNATPortMap: false,
+	})
 }

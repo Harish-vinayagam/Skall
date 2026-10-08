@@ -19,7 +19,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	libp2ppeer "github.com/libp2p/go-libp2p/core/peer"
-	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/Harish-vinayagam/Skall/internal/chat"
 	"github.com/Harish-vinayagam/Skall/internal/config"
@@ -76,9 +75,9 @@ func runCLI(args []string, localID identity.Identity, cfg config.Config, out io.
 
 	case "connect":
 		if len(args) < 2 {
-			return errors.New("usage: skall connect <multiaddr|host:port>")
+			return errors.New("usage: skall connect <multiaddr|peer-id|host:port> [peer-id]")
 		}
-		return handleConnectCommand(args[1], localID, cfg, out)
+		return handleConnectCommand(args[1:], localID, cfg, out)
 
 	case "chat":
 		target := ""
@@ -132,7 +131,7 @@ func runCLI(args []string, localID identity.Identity, cfg config.Config, out io.
 				listenAddr = parseListenAddr(args[i])
 			}
 		}
-		return runP2P(localID, listenAddr, peerAddrs)
+		return runP2P(localID, cfg, listenAddr, peerAddrs)
 
 	case "tui":
 		listenAddr := ""
@@ -178,7 +177,7 @@ Commands:
   identity                                  Show local cryptographic identity & peer IDs
   identity set-name <display-name>          Update your display name
   peers                                     List known and connected peers
-  connect <multiaddr|host:port>             Test and establish peer connection
+	connect <multiaddr|peer-id|host:port>     Test and establish peer connection
   chat [peer-id|multiaddr]                  Start chat session targeting a peer
   groups [list]                             List all known groups
   groups create <id> [name]                 Create a new chat group
@@ -190,7 +189,7 @@ Commands:
 
 Options:
   -l, --listen <port|multiaddr>             Specify listen address (e.g. 9001 or /ip4/0.0.0.0/tcp/9001)
-  -p, --peer <multiaddr>                    Connect to peer on startup (repeatable)
+	-p, --peer <multiaddr|peer-id>            Connect to peer on startup (repeatable)
 
 Diagnostics / Advanced:
   p2p [--listen PORT] [--peer MULTIADDR]    CLI-only peer broadcast session
@@ -268,51 +267,44 @@ func handlePeersCommand(cfg config.Config, out io.Writer) error {
 	return nil
 }
 
-func handleConnectCommand(target string, localID identity.Identity, cfg config.Config, out io.Writer) error {
-	target = strings.TrimSpace(target)
-	if target == "" {
+func handleConnectCommand(args []string, localID identity.Identity, cfg config.Config, out io.Writer) error {
+	if len(args) == 0 {
 		return errors.New("target address is required")
 	}
-
-	// Try parsing as multiaddr
-	maddr, err := ma.NewMultiaddr(target)
-	if err == nil {
-		pi, err := libp2ppeer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			return fmt.Errorf("parse multiaddr: %w", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		node, err := p2p.BuildNodeNoMDNS(ctx, localID, []string{"/ip4/0.0.0.0/tcp/0"})
-		if err != nil {
-			return fmt.Errorf("build p2p node: %w", err)
-		}
-		defer node.Close()
-
-		if err := node.Connect(ctx, *pi); err != nil {
-			return fmt.Errorf("connect to %s: %w", target, err)
-		}
-
-		// Save to SQLite
-		if db, err := openStore(cfg); err == nil {
-			_ = db.UpsertPeer(pi.ID.String(), pi.ID.String(), time.Now().UTC())
-			_ = db.Close()
-		}
-
-		fmt.Fprintf(out, "Successfully connected to peer: %s\n", pi.ID)
-		return nil
+	target := strings.TrimSpace(args[0])
+	peerID := ""
+	if len(args) > 1 {
+		peerID = strings.TrimSpace(args[1])
 	}
 
-	// Fall back to standard TCP dial validation
-	conn, err := net.DialTimeout("tcp", target, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	pi, err := p2p.ParsePeerAddr(target, peerID)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", target, err)
+		return fmt.Errorf("parse peer address: %w", err)
 	}
-	_ = conn.Close()
 
-	fmt.Fprintf(out, "TCP endpoint %s is reachable.\n", target)
+	node, err := p2p.BuildNodeWithOptions(ctx, localID, p2p.NodeOptions{
+		ListenAddrs:      []string{"/ip4/0.0.0.0/tcp/0"},
+		EnableMDNS:       false,
+		EnableNATPortMap: false,
+	})
+	if err != nil {
+		return fmt.Errorf("build p2p node: %w", err)
+	}
+	defer node.Close()
+
+	if err := node.Connect(ctx, pi); err != nil {
+		return fmt.Errorf("connect to %s: %w", target, err)
+	}
+
+	if db, err := openStore(cfg); err == nil {
+		_ = db.UpsertPeer(pi.ID.String(), pi.ID.String(), time.Now().UTC())
+		_ = db.Close()
+	}
+
+	fmt.Fprintf(out, "Successfully connected to peer: %s\n", pi.ID)
 	return nil
 }
 
@@ -470,43 +462,28 @@ func loadLocalIdentity(cfg config.Config) (identity.Identity, error) {
 }
 
 // runP2P starts a libp2p-backed SKALL node in CLI broadcast mode.
-func runP2P(localID identity.Identity, listenAddr string, peerAddrs []string) error {
+func runP2P(localID identity.Identity, cfg config.Config, listenAddr string, peerAddrs []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	var listenAddrs []string
-	if listenAddr != "" {
-		listenAddrs = []string{listenAddr}
-	}
-
-	node, err := p2p.BuildNode(ctx, localID, listenAddrs)
+	node, err := buildNodeFromConfig(ctx, localID, cfg, listenAddr)
 	if err != nil {
 		return fmt.Errorf("p2p: build node: %w", err)
 	}
 	defer node.Close()
+
+	runtime, err := startNetworkServices(ctx, node, cfg)
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
 
 	lp2pID, err := localID.LibP2PPeerID()
 	if err != nil {
 		return fmt.Errorf("p2p: derive peer id: %w", err)
 	}
 
-	for _, peerAddr := range peerAddrs {
-		maddr, err := ma.NewMultiaddr(peerAddr)
-		if err != nil {
-			log.Printf("skall: invalid peer addr %q: %v", peerAddr, err)
-			continue
-		}
-		pi, err := libp2ppeer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			log.Printf("skall: parse peer addr %q: %v", peerAddr, err)
-			continue
-		}
-		if err := node.Connect(ctx, *pi); err != nil {
-			log.Printf("skall: connect to %s: %v", peerAddr, err)
-		} else {
-			log.Printf("skall: connected to %s", peerAddr)
-		}
-	}
+	connectPeerTargets(ctx, node, peerAddrs)
 
 	fmt.Printf("SKALL p2p node started\n")
 	fmt.Printf("  SKALL peer ID  : %s\n", localID.PeerID)
@@ -516,7 +493,12 @@ func runP2P(localID identity.Identity, listenAddr string, peerAddrs []string) er
 	for _, addr := range node.Addrs() {
 		fmt.Printf("    %s/p2p/%s\n", addr, lp2pID)
 	}
-	fmt.Println("mDNS discovery active. Peers on the same LAN will connect automatically.")
+	if cfg.Network.EnableMDNS {
+		fmt.Println("mDNS discovery active. Peers on the same LAN will connect automatically.")
+	}
+	if cfg.Network.EnableRelay || cfg.Network.EnableHolePunch || cfg.Network.EnableAutoNAT {
+		fmt.Println("Relay and NAT traversal features are enabled for this node.")
+	}
 	fmt.Println("Type a message and press Enter to broadcast. Press Ctrl+C to quit.")
 
 	node.SetMessageHandler(func(msg protocol.Message, from libp2ppeer.ID) {
@@ -612,47 +594,25 @@ func runTUI(localID identity.Identity, cfg config.Config, listenAddr string, pee
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	var listenAddrs []string
-	if listenAddr != "" && listenAddr != "/ip4/0.0.0.0/tcp/0" {
-		listenAddrs = []string{listenAddr}
-	} else if len(cfg.Network.ListenAddrs) > 0 && cfg.Network.ListenAddrs[0] != "/ip4/0.0.0.0/tcp/0" {
-		listenAddrs = cfg.Network.ListenAddrs
-	}
-
-	// Merge bootstrap peers from config
-	for _, bp := range cfg.Network.BootstrapPeers {
-		if bp != "" {
-			peerAddrs = append(peerAddrs, bp)
-		}
-	}
-
-	node, err := p2p.BuildNode(ctx, localID, listenAddrs)
+	node, err := buildNodeFromConfig(ctx, localID, cfg, listenAddr)
 	if err != nil {
 		return fmt.Errorf("tui: build p2p node: %w", err)
 	}
+	defer node.Close()
+
+	runtime, err := startNetworkServices(ctx, node, cfg)
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
 
 	lp2pID, _ := localID.LibP2PPeerID()
 	for _, addr := range node.Addrs() {
 		log.Printf("skall: listening on %s/p2p/%s", addr, lp2pID)
 	}
 
-	for _, peerAddr := range peerAddrs {
-		maddr, err := ma.NewMultiaddr(peerAddr)
-		if err != nil {
-			log.Printf("skall: invalid peer addr %q: %v", peerAddr, err)
-			continue
-		}
-		pi, err := libp2ppeer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			log.Printf("skall: parse peer addr %q: %v", peerAddr, err)
-			continue
-		}
-		if err := node.Connect(ctx, *pi); err != nil {
-			log.Printf("skall: connect to %s: %v", peerAddr, err)
-		} else {
-			log.Printf("skall: connected to %s", peerAddr)
-		}
-	}
+	peerAddrs = append(peerAddrs, cfg.Network.BootstrapPeers...)
+	connectPeerTargets(ctx, node, peerAddrs)
 
 	db, err := openStore(cfg)
 	if err != nil {
@@ -682,4 +642,94 @@ func runTUI(localID identity.Identity, cfg config.Config, listenAddr string, pee
 	_ = svc.Close()
 	_ = db.Close()
 	return nil
+}
+
+type networkRuntime struct {
+	bootstrap *p2p.BootstrapManager
+	dht       *p2p.DHTManager
+}
+
+func (r *networkRuntime) Close() {
+	if r == nil {
+		return
+	}
+	if r.bootstrap != nil {
+		_ = r.bootstrap.Close()
+	}
+	if r.dht != nil {
+		_ = r.dht.Close()
+	}
+}
+
+func buildNodeFromConfig(ctx context.Context, localID identity.Identity, cfg config.Config, listenAddr string) (*p2p.Node, error) {
+	listenAddrs := cfg.Network.ListenAddrs
+	if listenAddr != "" {
+		listenAddrs = []string{listenAddr}
+	}
+	return p2p.BuildNodeWithOptions(ctx, localID, p2p.NodeOptions{
+		ListenAddrs:      listenAddrs,
+		EnableMDNS:       cfg.Network.EnableMDNS,
+		EnableNATPortMap: true,
+		EnableAutoNAT:    cfg.Network.EnableAutoNAT,
+		EnableRelay:      cfg.Network.EnableRelay,
+		EnableHolePunch:  cfg.Network.EnableHolePunch,
+		AdvertisedAddrs:  cfg.Network.AdvertisedAddrs,
+	})
+}
+
+func connectPeerTargets(ctx context.Context, node p2p.Host, peerAddrs []string) {
+	for _, peerAddr := range peerAddrs {
+		pi, err := p2p.ParsePeerAddr(peerAddr, "")
+		if err != nil {
+			log.Printf("skall: invalid peer addr %q: %v", peerAddr, err)
+			continue
+		}
+		if err := node.Connect(ctx, pi); err != nil {
+			log.Printf("skall: connect to %s: %v", peerAddr, err)
+		} else {
+			log.Printf("skall: connected to %s", peerAddr)
+		}
+	}
+}
+
+func startNetworkServices(ctx context.Context, node p2p.Host, cfg config.Config) (*networkRuntime, error) {
+	runtime := &networkRuntime{}
+
+	if len(cfg.Network.BootstrapPeers) > 0 {
+		bootstrapMgr, err := p2p.NewBootstrapManager(node, cfg.Network.BootstrapPeers, p2p.DefaultBackoffConfig())
+		if err != nil {
+			return nil, fmt.Errorf("start bootstrap manager: %w", err)
+		}
+		results := bootstrapMgr.ConnectAll(ctx)
+		for _, result := range results {
+			if result.Err != nil {
+				log.Printf("skall: bootstrap peer %s unavailable: %v", result.AddrInfo.ID, result.Err)
+			}
+		}
+		bootstrapMgr.Start(ctx)
+		runtime.bootstrap = bootstrapMgr
+	}
+
+	dhtMgr, err := p2p.NewDHTManager(ctx, node.LibP2PHost(), p2p.DHTConfig{
+		Mode:         cfg.Network.DHTMode,
+		Namespace:    cfg.Network.DHTNamespace,
+		PollInterval: 30 * time.Second,
+		RecordTTL:    15 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start dht manager: %w", err)
+	}
+	if dhtMgr != nil {
+		dhtMgr.StartDiscovery(ctx, func(pi libp2ppeer.AddrInfo) {
+			if pi.ID == node.ID() {
+				return
+			}
+			if err := node.Connect(ctx, pi); err != nil {
+				log.Printf("skall: dht connect to %s: %v", pi.ID, err)
+			}
+		})
+		runtime.dht = dhtMgr
+	}
+
+	return runtime, nil
 }
