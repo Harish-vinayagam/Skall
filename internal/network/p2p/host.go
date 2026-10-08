@@ -46,6 +46,9 @@ type Host interface {
 	// Addrs returns the multiaddresses this node is listening on.
 	Addrs() []ma.Multiaddr
 
+	// LibP2PHost exposes the underlying libp2p host for advanced wiring.
+	LibP2PHost() libhost.Host
+
 	// Connect establishes a connection to the peer described by pi.
 	// It is a no-op when already connected.
 	Connect(ctx context.Context, pi peer.AddrInfo) error
@@ -90,6 +93,11 @@ func (n *Node) ID() peer.ID {
 // Addrs returns the multiaddresses this node listens on.
 func (n *Node) Addrs() []ma.Multiaddr {
 	return n.host.Addrs()
+}
+
+// LibP2PHost exposes the underlying libp2p host for bootstrap/DHT wiring.
+func (n *Node) LibP2PHost() libhost.Host {
+	return n.host
 }
 
 // Connect establishes (or verifies) a connection to the peer described by pi.

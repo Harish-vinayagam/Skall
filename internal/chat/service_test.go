@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	libhost "github.com/libp2p/go-libp2p/core/host"
 	libp2ppeer "github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -27,6 +28,7 @@ type stubHost struct {
 func (h *stubHost) ID() libp2ppeer.ID                                      { return "stub" }
 func (h *stubHost) Addrs() []ma.Multiaddr                                  { return nil }
 func (h *stubHost) Connect(_ context.Context, _ libp2ppeer.AddrInfo) error { return nil }
+func (h *stubHost) LibP2PHost() libhost.Host                               { return nil }
 func (h *stubHost) ConnectedPeers() []libp2ppeer.ID                        { return nil }
 func (h *stubHost) SetMessageHandler(fn p2p.MessageHandler) {
 	h.mu.Lock()

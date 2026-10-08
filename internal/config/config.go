@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Harish-vinayagam/Skall/internal/network/p2p"
 )
 
 // NetworkConfig controls p2p connectivity and discovery.
@@ -14,11 +16,29 @@ type NetworkConfig struct {
 	// ListenAddrs are the multiaddresses the libp2p node will bind to.
 	ListenAddrs []string `json:"listen_addresses"`
 
+	// AdvertisedAddrs are optional externally reachable addresses to publish.
+	AdvertisedAddrs []string `json:"advertised_addresses,omitempty"`
+
 	// EnableMDNS enables local network peer discovery via multicast DNS.
 	EnableMDNS bool `json:"enable_mdns"`
 
 	// BootstrapPeers is a list of multiaddresses to connect to on startup.
 	BootstrapPeers []string `json:"bootstrap_peers,omitempty"`
+
+	// EnableRelay toggles libp2p relay client/server support.
+	EnableRelay bool `json:"enable_relay"`
+
+	// EnableHolePunch toggles libp2p hole punching.
+	EnableHolePunch bool `json:"enable_hole_punch"`
+
+	// EnableAutoNAT toggles AutoNAT v2 reachability detection.
+	EnableAutoNAT bool `json:"enable_autonat"`
+
+	// DHTMode controls the rendezvous / peer discovery mode.
+	DHTMode string `json:"dht_mode"`
+
+	// DHTNamespace scopes distributed peer discovery.
+	DHTNamespace string `json:"dht_namespace,omitempty"`
 }
 
 // UIConfig controls TUI visual preferences.
@@ -63,8 +83,14 @@ func DefaultConfig() Config {
 		DataDir: dataDir,
 		Network: NetworkConfig{
 			ListenAddrs:    []string{"/ip4/0.0.0.0/tcp/0"},
+			AdvertisedAddrs: []string{},
 			EnableMDNS:     true,
 			BootstrapPeers: []string{},
+			EnableRelay:    false,
+			EnableHolePunch: false,
+			EnableAutoNAT:  false,
+			DHTMode:        "auto",
+			DHTNamespace:   "skall.rendezvous.v2",
 		},
 		UI: UIConfig{
 			Theme:          "default",
@@ -176,6 +202,31 @@ func (c *Config) Validate() error {
 
 	if len(c.Network.ListenAddrs) == 0 {
 		c.Network.ListenAddrs = []string{"/ip4/0.0.0.0/tcp/0"}
+	}
+	for _, addr := range c.Network.ListenAddrs {
+		if err := p2p.ValidateMultiaddr(addr); err != nil {
+			return fmt.Errorf("validate listen address %q: %w", addr, err)
+		}
+	}
+	for _, addr := range c.Network.AdvertisedAddrs {
+		if err := p2p.ValidateMultiaddr(addr); err != nil {
+			return fmt.Errorf("validate advertised address %q: %w", addr, err)
+		}
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Network.DHTMode))
+	switch mode {
+	case "", "auto", "client", "server", "disabled":
+		if mode == "" {
+			c.Network.DHTMode = "auto"
+		}
+	default:
+		return fmt.Errorf("invalid dht_mode %q: must be auto, client, server, or disabled", c.Network.DHTMode)
+	}
+	if c.Network.DHTMode == "" {
+		c.Network.DHTMode = "auto"
+	}
+	if c.Network.DHTNamespace == "" {
+		c.Network.DHTNamespace = "skall.rendezvous.v2"
 	}
 
 	if c.UI.Theme == "" {
